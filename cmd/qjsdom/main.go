@@ -166,17 +166,22 @@ func main() {
 				}
 			}
 			fmt.Fprintf(os.Stderr, "[images] 下载成功 %d/%d 张\n", okN, len(out.ImageFiles))
-			for i, im := range out.ImageFiles {
-				if i >= 5 {
-					fmt.Fprintf(os.Stderr, "         …另有 %d 张\n", len(out.ImageFiles)-5)
-					break
-				}
+			// 成功的只列前 5 条;失败的【全部】列出 ——
+			// 失败信息才是排查时要看的,截断掉等于没说。
+			shownOK := 0
+			for _, im := range out.ImageFiles {
 				if im.Path != "" {
-					fmt.Fprintf(os.Stderr, "         ✅ %s  %dx%d  %d KB\n",
-						filepath.Base(im.Path), im.Width, im.Height, im.Bytes>>10)
-				} else {
-					fmt.Fprintf(os.Stderr, "         ❌ %s  → %s\n", shorten(im.URL, 46), im.Error)
+					if shownOK < 5 {
+						fmt.Fprintf(os.Stderr, "         ✅ %s  %dx%d  %d KB\n",
+							filepath.Base(im.Path), im.Width, im.Height, im.Bytes>>10)
+						shownOK++
+					}
+					continue
 				}
+				fmt.Fprintf(os.Stderr, "         ❌ %s  → %s\n", shorten(im.URL, 50), im.Error)
+			}
+			if okN > shownOK {
+				fmt.Fprintf(os.Stderr, "         …另有 %d 张成功(未列出)\n", okN-shownOK)
 			}
 		}
 	}
