@@ -4,7 +4,8 @@
 
 用 [qjs](https://github.com/fastschema/qjs)(QuickJS via Wazero WASM)+
 [linkedom](https://github.com/WebReflection/linkedom) 在 Go 进程内解析网页、
-执行页面 JavaScript、提取正文与图片。CGO-free,单个静态二进制。
+执行页面 JavaScript、提取正文与图片。CGO-free,单个静态二进制 ——
+既能当命令行工具用,也能作为 MCP 服务运行。
 
 ## 为什么
 
@@ -227,6 +228,54 @@ go build -o qjsdom ./cmd/qjsdom
 Go 标准库的 flag 包默认在第一个非 flag 参数处停止解析,会**静默丢弃**
 后面的 flag(不报错)。这个坑太隐蔽,所以做了参数重排。
 
+## 作为 MCP 服务运行
+
+`qjsdom-mcp` 把 qjsdom 暴露成一个 MCP 工具,任何 MCP 客户端都能调用它。
+它面向不想引入重型基础设施的人:一个静态二进制,不需要浏览器,也不需要
+Node 或 Bun 运行时。
+
+```bash
+go install github.com/<owner>/qjsdom/cmd/qjsdom-mcp@latest
+```
+
+客户端配置(以 Claude Desktop 为例,其它客户端写法相同):
+
+```json
+{
+  "mcpServers": {
+    "qjsdom": {
+      "command": "qjsdom-mcp",
+      "env": { "QJSDOM_MAX_IMAGES": "5" }
+    }
+  }
+}
+```
+
+工具 `fetch_page` 接受 `url`、`mode`、`selector`、`max_len` 和 `images`,
+返回正文文本,并把页面插图作为**图片内容块**返回 —— 模型直接看得见图,
+不必去读本地文件路径。这是 MCP 版本比 CLI 更适合共享的原因。
+
+实测(维基「糖酵解」,`mode=article`):返回 3420 字符正文 + 5 张图片内容块;
+页面共有 87 张图,其中 60 张因过小被当作图标跳过。
+
+### 环境变量
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `QJSDOM_CACHE_DIR` | 用户缓存目录/qjsdom | 缓存目录 |
+| `QJSDOM_CACHE_TTL` | `10m` | 缓存有效期;设 `0` 关闭缓存 |
+| `QJSDOM_CACHE_MAX` | 64MB | 缓存容量上限 |
+| `QJSDOM_TIMEOUT` | `20s` | 抓取超时 |
+| `QJSDOM_MAX_TEXT` | `60000` | 正文截断长度 |
+| `QJSDOM_MAX_IMAGES` | `5` | 每次返回的图片数;设 `0` 不返回图片 |
+| `QJSDOM_MIN_IMAGE_SIDE` | `100` | 小于此边长的图片按图标丢弃 |
+| `QJSDOM_MIN_IMAGE_BYTES` | `5120` | 小于此字节数的图片丢弃 |
+| `QJSDOM_MAX_IMAGE_BYTES` | `2MB` | 单张图片字节上限 |
+| `QJSDOM_DEBUG` | — | 设为 `1` 时把诊断信息写到 stderr |
+
+MCP 服务是长驻进程,所以它**默认开启缓存**(CLI 相反,默认关闭)——
+模型换 mode 重试时不必重新抓取。
+
 ## 重建 linkedom bundle
 
 `internal/renderer/assets/linkedom.core.js` 是 esbuild 产物。要更新:
@@ -242,6 +291,8 @@ Go 标准库的 flag 包默认在第一个非 flag 参数处停止解析,会**�
 
 ```
 cmd/qjsdom/                 CLI 入口
+cmd/qjsdom-mcp/             MCP 服务入口
+internal/cache/             页面源码缓存(TTL + 容量上限)
 internal/renderer/          引擎:qjs 加载 + 页面处理
   js/host_shims.js          宿主 API 的纯 JS shim
   js/image_fetch.js         Image 的真实网络实现(覆盖 shim 版)
@@ -272,7 +323,7 @@ testdata/                   离线测试页
 - [ ] qjs `Compile()` 字节码缓存,降低每页注入开销
 - [ ] `gbk`/`gb2312` 解码
 - [ ] 输出 Markdown 而非纯文本
-- [ ] 常驻服务模式(供 MCP / 其它进程调用)
+- [ ] 预编译二进制与 GitHub Releases,方便不装 Go 的用户
 
 ## 许可
 
