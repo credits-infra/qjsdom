@@ -21,10 +21,13 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/fastschema/qjs"
+
+	"qjsdom/internal/fetcher"
 )
 
 //go:embed js/host_shims.js
@@ -32,6 +35,9 @@ var hostShims string
 
 //go:embed js/page_runner.js
 var pageRunner string
+
+//go:embed js/image_fetch.js
+var imageFetch string
 
 //go:embed assets/linkedom.core.js
 var linkedomBundle string
@@ -44,6 +50,11 @@ type Options struct {
 	MaxTextLen int
 	// RunScripts 是否执行页面内联脚本(默认 true)。
 	RunScripts bool
+	// EnableImages 是否让 `new Image()` 真的去取图片尺寸(默认 true)。
+	// 用「禁用」而非「启用」表达,是为了让 Go 的零值 = 默认开启。
+	DisableImages bool
+	// FetchOptions 供图片探测使用的网络参数。
+	FetchOptions fetcher.Options
 }
 
 // Result 是渲染结果。字段名对应 page_runner.js 的返回 JSON。
@@ -82,11 +93,23 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	defer rt.Close()
 	ctx := rt.Context()
 
+	// 注册宿主网络能力。必须在 eval image_fetch.js 之前 ——
+	// 那个脚本靠 typeof __qjsdom_imageProbe 判断网络层是否可用。
+	if !opt.DisableImages {
+		registerImageProbe(ctx, pageURL, opt)
+	}
+
 	if _, err := ctx.Eval("host_shims.js", qjs.Code(hostShims)); err != nil {
 		return nil, fmt.Errorf("宿主 shim 注入失败: %w", err)
 	}
 	if _, err := ctx.Eval("linkedom.js", qjs.Code(linkedomBundle)); err != nil {
 		return nil, fmt.Errorf("linkedom 注入失败: %w", err)
+	}
+	// 用真实网络版 Image 覆盖 host_shims 里的简易实现
+	if !opt.DisableImages {
+		if _, err := ctx.Eval("image_fetch.js", qjs.Code(imageFetch)); err != nil {
+			return nil, fmt.Errorf("Image 网络层注入失败: %w", err)
+		}
 	}
 
 	script := buildRunner(html, pageURL, opt)
@@ -125,6 +148,50 @@ func buildRunner(html, pageURL string, opt Options) string {
 	s = strings.ReplaceAll(s, "__URL__", string(urlLit))
 	s = strings.ReplaceAll(s, "__SELECTOR__", string(selLit))
 	return s
+}
+
+// registerImageProbe 把 Go 侧的网络能力暴露给页面 JS。
+//
+// JS 侧拿到的是 JSON 字符串(而不是对象)—— 避免在两种运行时之间
+// 传递复杂对象,也让失败情况能统一用 {ok:false,error:...} 表达。
+func registerImageProbe(ctx *qjs.Context, pageURL string, opt Options) {
+	fo := opt.FetchOptions
+	if fo.UserAgent == "" {
+		fo = fetcher.DefaultOptions()
+	}
+	// 单张图不该拖住整页:把探测超时压到最多 8 秒
+	if fo.Timeout <= 0 || fo.Timeout > 8*time.Second {
+		fo.Timeout = 8 * time.Second
+	}
+
+	var base *url.URL
+	if pageURL != "" {
+		base, _ = url.Parse(pageURL)
+	}
+
+	ctx.SetFunc("__qjsdom_imageProbe", func(this *qjs.This) (*qjs.Value, error) {
+		c := this.Context()
+		args := this.Args()
+		if len(args) == 0 {
+			return c.NewString(`{"ok":false,"error":"缺少 url 参数"}`), nil
+		}
+
+		raw := strings.TrimSpace(args[0].String())
+		abs := raw
+		// 页面里的图片多是相对路径,按页面 URL 补全
+		if base != nil && !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+			if u, err := url.Parse(raw); err == nil {
+				abs = base.ResolveReference(u).String()
+			}
+		}
+
+		info := fetcher.ProbeImage(abs, fo)
+		b, err := json.Marshal(info)
+		if err != nil {
+			return c.NewString(`{"ok":false,"error":"结果编码失败"}`), nil
+		}
+		return c.NewString(string(b)), nil
+	})
 }
 
 func truncate(s string, n int) string {

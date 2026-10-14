@@ -28,6 +28,7 @@ func main() {
 		asJSON     = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
 		filePath   = flag.String("file", "", "渲染本地 HTML 文件,不联网")
 		noScripts  = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
+		noImages   = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
 		stats      = flag.Bool("stats", false, "把诊断信息打印到 stderr")
 		allowPriv  = flag.Bool("allow-private", false, "允许访问内网地址(仅本地测试)")
 		timeout    = flag.Duration("timeout", 20*time.Second, "抓取超时")
@@ -45,6 +46,11 @@ func main() {
 		pageURL string
 	)
 
+	// 网络参数在两条路径(联网抓取 / 本地文件)都要用 —— 后者用于图片探测
+	fetchOpts := fetcher.DefaultOptions()
+	fetchOpts.Timeout = *timeout
+	fetchOpts.AllowPrivate = *allowPriv
+
 	if *filePath != "" {
 		b, err := os.ReadFile(*filePath)
 		if err != nil {
@@ -60,11 +66,7 @@ func main() {
 		}
 		pageURL = flag.Arg(0)
 
-		fo := fetcher.DefaultOptions()
-		fo.Timeout = *timeout
-		fo.AllowPrivate = *allowPriv
-
-		res, err := fetcher.Fetch(pageURL, fo)
+		res, err := fetcher.Fetch(pageURL, fetchOpts)
 		if err != nil {
 			fatal("%v", err)
 		}
@@ -77,9 +79,11 @@ func main() {
 	}
 
 	out, err := renderer.Render(html, pageURL, renderer.Options{
-		Selector:   *selector,
-		MaxTextLen: *maxLen,
-		RunScripts: !*noScripts,
+		Selector:      *selector,
+		MaxTextLen:    *maxLen,
+		RunScripts:    !*noScripts,
+		DisableImages: *noImages,
+		FetchOptions:  fetchOpts,
 	})
 	if err != nil {
 		fatal("渲染失败: %v", err)

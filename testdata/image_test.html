@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><title>Image fetch 测试页</title></head>
+<body>
+<h1>Image 网络探测测试</h1>
+<div id="out">等待脚本执行…</div>
+<script>
+var log = [];
+function show() { document.getElementById("out").textContent = log.join(" | "); }
+
+// 场景 1:onload 回调
+var img = new Image();
+img.onload = function () {
+  log.push("onload: " + img.naturalWidth + "x" + img.naturalHeight + " complete=" + img.complete);
+  show();
+};
+img.onerror = function () { log.push("onerror(场景1)"); show(); };
+img.src = "https://www.wikipedia.org/portal/wikipedia.org/assets/img/Wikipedia-logo-v2.png";
+
+// 场景 2:addEventListener
+var img2 = new Image();
+img2.addEventListener("load", function () {
+  log.push("addEventListener: " + img2.naturalWidth + "x" + img2.naturalHeight);
+  show();
+});
+img2.src = "https://www.wikipedia.org/portal/wikipedia.org/assets/img/Wikipedia-logo-v2.png";
+
+// 场景 3:不存在的图片,应走 error
+var img3 = new Image();
+img3.onerror = function () { log.push("场景3 正确进入 error 分支"); show(); };
+img3.onload = function () { log.push("场景3 意外 onload"); show(); };
+img3.src = "https://www.wikipedia.org/NO_SUCH_IMAGE_xyz.png";
+</script>
+</body>
+</html>
