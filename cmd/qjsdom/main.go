@@ -24,7 +24,8 @@ import (
 
 func main() {
 	var (
-		selector   = flag.String("selector", "", "正文容器 CSS 选择器(留空则自动探测)")
+		modeFlag   = flag.String("mode", "all", "提取策略: all(整页,默认) / article(正文) / links(链接列表)")
+		selector   = flag.String("selector", "", "正文容器 CSS 选择器(对 all/article 生效)")
 		maxLen     = flag.Int("max", 0, "正文截断长度,0=不截断")
 		asJSON     = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
 		filePath   = flag.String("file", "", "渲染本地 HTML 文件,不联网")
@@ -93,6 +94,7 @@ func main() {
 	}
 
 	out, err := renderer.Render(html, pageURL, renderer.Options{
+		Mode:           renderer.ParseMode(*modeFlag),
 		Selector:       *selector,
 		MaxTextLen:     *maxLen,
 		RunScripts:     !*noScripts,
@@ -183,6 +185,7 @@ func shorten(s string, n int) string {
 // 它的值还是位置参数。
 func reorderArgs(args []string) []string {
 	valueFlags := map[string]bool{
+		"-mode":       true,
 		"-selector":   true,
 		"-max":        true,
 		"-file":       true,

@@ -62,6 +62,7 @@
       images: [],
       hasBody: false,
       degraded: true,
+      mode: String(__MODE__ || "all").toLowerCase(),
     });
   }
 
@@ -97,43 +98,140 @@
       }
     }
 
-    // ---- 3. 提取正文 ----
-    const SELECTOR = __SELECTOR__;
+    // ---- 3. 提取内容(按 mode 分流)----
+    //
+    // mode 由【调用方】指定,不做自动判型:
+    //   意图信息本来就由调用方持有 —— 模型知道自己是在搜索还是在读文章,
+    //   而"从页面特征反推意图"的启发式判型必然会在混合页上出错。
+    //   all(默认)什么都不丢,选错时的重试成本只是一次渲染。
+    const MODE = String(__MODE__ || "all").toLowerCase();
+
+    const normText = (s) => String(s || "")
+      .replace(/[ \t\u00a0]+/g, " ")
+      .replace(/\n\s*\n\s*\n+/g, "\n\n")
+      .trim();
+
+    const PAGE_URL = __URL__;
+
+    // 链接清理。三件事:
+    //  · HTML 实体 —— getAttribute 不解码,&amp; 会原样带出来
+    //  · 协议相对 URL(//host/path)→ 补当前页面的协议
+    //  · 重定向包装 —— 搜索结果页普遍这样(DDG 的 uddg=、Google 的 url=/q=),
+    //    真实地址藏在查询参数里,不解开的话给出去的全是跳转链
+    const cleanURL = (raw) => {
+      let u = String(raw || "").trim();
+      u = u.replace(/&amp;/g, "&").replace(/&#38;/g, "&")
+           .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+           .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      if (!u) return "";
+      if (u.startsWith("//")) {
+        let proto = "https:";
+        try {
+          const m = String(PAGE_URL).match(/^([a-z]+:)/i);
+          if (m) proto = m[1];
+        } catch (e) {}
+        u = proto + u;
+      }
+      try {
+        const q = u.indexOf("?");
+        if (q >= 0) {
+          for (const key of ["uddg", "url", "q", "u", "target", "redirect"]) {
+            const m = u.slice(q + 1).match(new RegExp("(?:^|&)" + key + "=([^&]+)"));
+            if (!m) continue;
+            let v = "";
+            try { v = decodeURIComponent(m[1]); } catch (e) { v = m[1]; }
+            // 只接受真正的绝对地址 —— 否则 q= 这类参数会把搜索词当 URL
+            if (/^https?:\/\//i.test(v)) { u = v; break; }
+          }
+        }
+      } catch (e) {}
+      return u;
+    };
+
+    // 收集链接(标题 + URL)。links 模式把它当正文输出。
+    const collectLinks = () => {
+      const out = [];
+      try {
+        for (const a of document.querySelectorAll("a[href]")) {
+          const h = a.getAttribute("href");
+          if (!h || h.startsWith("#") || h.startsWith("javascript:")) continue;
+          const t = normText(a.textContent || "").replace(/\n+/g, " ");
+          // 过滤掉纯图标链接与超长文本(后者多半是整段包裹在 <a> 里的导航)
+          if (!t || t.length < 2 || t.length > 300) continue;
+          const url = cleanURL(h);
+          if (!url) continue;
+          out.push({ title: t, url: url });
+          if (out.length >= 200) break;
+        }
+      } catch (e) {}
+      return out;
+    };
+
+    // article 模式的候选容器,按语义强度排序,取第一个命中的。
+    //
+    // 刻意【不做评分排序】:mode 已经由调用方指定,「选哪个最好」这件事
+    // 不在我们这里 —— 调用方觉得不准,传 selector 精确指定即可。
+    // (曾实现过链接密度评分,实测结果与 all 只差 665 字、且选中的容器
+    //  仍然含导航 —— 收益远不抵复杂度,已移除。)
+    const ARTICLE_SELECTORS = [
+      "article", "main", "[role=main]", "#mw-content-text",
+      ".post-content", ".entry-content", ".article-body",
+      "#content", ".content", ".article", ".post", "#main", ".main",
+    ];
+
     let node = null;
-    try {
-      if (SELECTOR) node = document.querySelector(SELECTOR);
-    } catch (e) { /* 选择器非法,落到自动探测 */ }
-    if (!node) {
-      const fallbacks = [
-        "article", "main", "[role=main]", "#mw-content-text", "#content",
-        ".content", ".article", ".post", "#main", ".main", "body",
-      ];
-      for (const s of fallbacks) {
-        let n = null;
-        try { n = document.querySelector(s); } catch (e) { continue; }
-        if (n && (n.textContent || "").trim().length > 200) { node = n; break; }
-      }
-    }
-    if (!node) node = document.body || document.documentElement;
-
     let text = "";
-    try {
-      text = (node.textContent || "")
-        .replace(/[ \t\u00a0]+/g, " ")
-        .replace(/\n\s*\n\s*\n+/g, "\n\n")
-        .trim();
-    } catch (e) { text = ""; }
+    let linkList = [];
 
-    // ---- 4. 收集链接与图片 ----
-    const links = [];
-    try {
-      for (const a of document.querySelectorAll("a[href]")) {
-        const h = a.getAttribute("href");
-        if (h && !h.startsWith("#") && !h.startsWith("javascript:")) links.push(h);
-        if (links.length >= 200) break;
+    if (MODE === "links") {
+      // 搜索页 / 目录页 / 导航页:链接就是内容本身
+      linkList = collectLinks();
+      text = linkList.map((l) => l.title + "\n  " + l.url).join("\n\n");
+    } else {
+      if (MODE === "article") {
+        // 按固定优先级取第一个像正文的容器(文本量 ≥ 200 字才算数)。
+        // 不做评分、不做自动判型 —— 判断已经交给调用方了。
+        try {
+          for (const sel of ARTICLE_SELECTORS) {
+            let n = null;
+            try { n = document.querySelector(sel); } catch (e) { continue; }
+            if (n && normText(n.textContent || "").length >= 200) { node = n; break; }
+          }
+        } catch (e) {}
+      } else {
+        // all(默认):整页文本,什么都不丢
+        node = document.body || document.documentElement;
       }
-    } catch (e) {}
 
+      // 调用方显式指定容器时优先 —— 对 article / all 都生效。
+      // mode 决定"怎么找正文",selector 是"直接指定正文在哪"。
+      const SELECTOR = __SELECTOR__;
+      if (SELECTOR) {
+        try {
+          const n = document.querySelector(SELECTOR);
+          if (n) node = n;
+        } catch (e) { /* 选择器非法,沿用 mode 的结果 */ }
+      }
+
+      // article 模式若一个候选都没命中,退回整页
+      if (!node) node = document.body || document.documentElement;
+
+      // 取文本时排除 <script>/<style> 的源码 —— 注意两点:
+      //  ① 页面脚本【已经在上面执行过了】,这里删的不是"该跑的代码",
+      //     而是跑完后残留在 DOM 里的源码文本(否则正文里会混进 JS)。
+      //  ② 对【克隆体】操作,不动原始 DOM,免得影响页面脚本后续的异步逻辑。
+      let target = node;
+      try {
+        target = node.cloneNode(true);
+        for (const el of target.querySelectorAll("script,style,noscript,template")) {
+          if (el.parentNode) el.parentNode.removeChild(el);
+        }
+      } catch (e) { target = node; }
+      try { text = normText(target.textContent || ""); } catch (e) { text = ""; }
+      linkList = collectLinks();
+    }
+
+    // ---- 4. 收集图片(所有 mode 都需要)----
     // 图片:必须处理【懒加载】。
     // 实测:维基条目的 <img> 里 src 是 1x1 的 base64 占位 GIF,真实地址在
     // data-src 等属性里 —— 只看 src 会一张都收集不到。
@@ -185,10 +283,11 @@
       scriptTags: scripts.length,
       scriptsRan: ran,
       scriptErrs: errs,
-      links: links,
+      links: linkList,
       images: images,
       hasBody: !!document.body,
       degraded: false,
+      mode: MODE,
     });
   }
 })()

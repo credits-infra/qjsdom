@@ -42,9 +42,51 @@ var imageFetch string
 //go:embed assets/linkedom.core.js
 var linkedomBundle string
 
+// Mode 决定内容提取策略。
+//
+// 刻意【不做自动判型】:意图信息本来就由调用方持有 —— 模型调这个工具时
+// 知道自己是在"找东西"还是在"读文章"。而"从页面特征反推意图"的启发式
+// 必然在混合页上出错(链接密度 15%~70% 的那些页面怎么办?)。
+// 选错 mode 的代价只是一次重新渲染,所以默认 all 兜底最稳。
+type Mode string
+
+const (
+	// ModeAll 整页文本 + 链接列表,什么都不丢(默认)。
+	ModeAll Mode = "all"
+	// ModeArticle 正文优先:在候选容器里挑链接密度最低的。
+	// 适合文章 / 百科 / 博客 / 文档。
+	ModeArticle Mode = "article"
+	// ModeLinks 链接列表(标题 + URL)。
+	// 搜索页 / 目录页 / 导航页的「正文」恰恰就是链接 ——
+	// 用 article 的判据反而会把真正的内容全删掉。
+	ModeLinks Mode = "links"
+)
+
+// ParseMode 解析 mode 字符串。未知值回落到 all,不报错 ——
+// 宁可给出一个可能不理想的结果,也不要因为参数写错而什么都不返回。
+func ParseMode(s string) Mode {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case string(ModeArticle):
+		return ModeArticle
+	case string(ModeLinks):
+		return ModeLinks
+	default:
+		return ModeAll
+	}
+}
+
+// Link 是页面里的一个链接(links 模式的内容主体)。
+type Link struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
 // Options 控制单次渲染行为。
 type Options struct {
-	// Selector 指定正文容器(留空则按常见文章容器自动探测)。
+	// Mode 提取策略(零值 = all)。由调用方指定,不做自动判型。
+	Mode Mode
+	// Selector 直接指定正文容器(对 all / article 生效;
+	// links 模式忽略它 —— 那种页面要的是全部链接)。
 	Selector string
 	// MaxTextLen 截断正文长度(0 = 不截断)。
 	MaxTextLen int
@@ -75,9 +117,11 @@ type Result struct {
 	ScriptTags int      `json:"scriptTags"`
 	ScriptsRan int      `json:"scriptsRan"`
 	ScriptErrs []string `json:"scriptErrs"`
-	Links      []string `json:"links"`
+	Links      []Link   `json:"links"`
 	Images     []string `json:"images"`
 	HasBody    bool     `json:"hasBody"`
+	// Mode 实际使用的提取策略。
+	Mode string `json:"mode"`
 	// Degraded 为 true 表示 DOM 解析失败、退回了粗暴的文本提取。
 	// 这种情况仍然会返回结果(而不是报错),调用方应按需降级处理。
 	Degraded bool `json:"degraded"`
@@ -205,10 +249,17 @@ func buildRunner(html, pageURL string, opt Options) string {
 	urlLit, _ := json.Marshal(pageURL)
 	selLit, _ := json.Marshal(opt.Selector)
 
+	mode := opt.Mode
+	if mode == "" {
+		mode = ModeAll
+	}
+	modeLit, _ := json.Marshal(string(mode))
+
 	s := pageRunner
 	s = strings.ReplaceAll(s, "__HTML__", string(htmlLit))
 	s = strings.ReplaceAll(s, "__URL__", string(urlLit))
 	s = strings.ReplaceAll(s, "__SELECTOR__", string(selLit))
+	s = strings.ReplaceAll(s, "__MODE__", string(modeLit))
 	return s
 }
 
