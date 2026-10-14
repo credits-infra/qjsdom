@@ -125,7 +125,14 @@ func main() {
 			"with no browser and no Node runtime. Use mode=links for search results and index " +
 			"pages, mode=article for articles and documentation, and the default mode=all when " +
 			"unsure. Page images are returned as image content blocks so you can read " +
-			"illustrations, diagrams, and figures.",
+			"illustrations, diagrams, and figures; the text ends with a numbered list giving " +
+			"each image's URL, format, pixel size, and saved path. " +
+			"To search the web, fetch https://html.duckduckgo.com/html/?q=<keywords> with " +
+			"mode=links, then open one of the results with mode=article. This tool cannot run " +
+			"fetch or XHR, so search engines that build their results with JavaScript " +
+			"(google.com/search, bing.com/search) come back as an empty shell. An empty " +
+			"result — text_len 0, no title — means this URL yielded nothing, not that the " +
+			"thing you looked for does not exist.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args fetchArgs) (*mcp.CallToolResult, fetchOut, error) {
 		return handleFetch(cfg, c, args)
 	})
