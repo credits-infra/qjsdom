@@ -113,16 +113,21 @@
 
     const PAGE_URL = __URL__;
 
+    // HTML 实体解码。getAttribute 不解码,`&amp;` 会原样带出来 —— 链接和图片
+    // 都要过这一道,否则带查询串的地址会被当成字面值:实测维基缩略图的
+    // `?utm_source=…&amp;utm_campaign=…` 原样进了抓取地址,也原样进了文件名。
+    const decodeEntities = (raw) => String(raw || "").trim()
+      .replace(/&amp;/g, "&").replace(/&#38;/g, "&")
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+
     // 链接清理。三件事:
     //  · HTML 实体 —— getAttribute 不解码,&amp; 会原样带出来
     //  · 协议相对 URL(//host/path)→ 补当前页面的协议
     //  · 重定向包装 —— 搜索结果页普遍这样(DDG 的 uddg=、Google 的 url=/q=),
     //    真实地址藏在查询参数里,不解开的话给出去的全是跳转链
     const cleanURL = (raw) => {
-      let u = String(raw || "").trim();
-      u = u.replace(/&amp;/g, "&").replace(/&#38;/g, "&")
-           .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-           .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      let u = decodeEntities(raw);
       if (!u) return "";
       if (u.startsWith("//")) {
         let proto = "https:";
@@ -237,9 +242,8 @@
     // data-src 等属性里 —— 只看 src 会一张都收集不到。
     // 另外 <picture><source srcset> 也是常见来源。
     const images = [];
-    const pushImg = (u) => {
-      if (!u) return;
-      u = String(u).trim();
+    const pushImg = (raw) => {
+      const u = decodeEntities(raw);
       if (!u || u.startsWith("data:") || u.startsWith("javascript:")) return;
       if (images.length < 100) images.push(u);
     };
