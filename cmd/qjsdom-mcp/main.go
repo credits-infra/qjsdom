@@ -24,7 +24,6 @@ package main
 import (
 	"context"
 	"crypto/sha1"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -238,7 +237,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 // pickedImage 是一张准备作为内容块返回的图片。
 type pickedImage struct {
 	mime string
-	data []byte // base64
+	data []byte // 原始图片字节(上 wire 时由 SDK 做 base64)
 	// path 是图片落盘后的绝对路径。为空表示没有启用落盘 ——
 	// 内容块能让模型看见图,但要让调用方把图发出去还需要一个路径。
 	path string
@@ -351,7 +350,11 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 
 		picked = append(picked, pickedImage{
 			mime: mimeOf(info.Format),
-			data: []byte(base64.StdEncoding.EncodeToString(data)),
+			// 原始字节,不是 base64 文本。go-sdk 的 ImageContent.Data 是 []byte,
+			// 序列化时由 encoding/json 自己 base64 编码上 wire —— 预先编码一次
+			// 会让 wire 上出现 base64(base64(png)),接收方解一次只得到一段
+			// ASCII,判定为非图片后被丢弃,图片内容块等于没发。
+			data: data,
 			path: imgPath,
 		})
 	}
