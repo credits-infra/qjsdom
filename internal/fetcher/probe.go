@@ -83,15 +83,19 @@ func ProbeImage(rawURL string, opt Options) ImageInfo {
 		},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		info.Error = err.Error()
-		return info
+	// 尺寸探测也走重试 —— 它同样会碰到限流,而返回假尺寸会让页面脚本
+	// 走进错误分支。
+	build := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("User-Agent", opt.UserAgent)
+		r.Header.Set("Accept", "image/*,*/*;q=0.8")
+		return r, nil
 	}
-	req.Header.Set("User-Agent", opt.UserAgent)
-	req.Header.Set("Accept", "image/*,*/*;q=0.8")
 
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(client, build)
 	if err != nil {
 		info.Error = err.Error()
 		return info

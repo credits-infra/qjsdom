@@ -89,15 +89,20 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 		},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
+	// 重试时需要重新构造请求(已发出的请求 Body 已被消费),
+	// 所以把「造请求」这件事包成闭包交给 doWithRetry。
+	build := func() (*http.Request, error) {
+		r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("User-Agent", opt.UserAgent)
+		r.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		r.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+		return r, nil
 	}
-	req.Header.Set("User-Agent", opt.UserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(client, build)
 	if err != nil {
 		return nil, fmt.Errorf("请求失败: %w", err)
 	}

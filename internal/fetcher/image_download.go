@@ -134,15 +134,18 @@ func fetchImageData(rawURL string, opt Options, maxBytes int64) ([]byte, ImageFi
 		},
 	}
 
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
-	if err != nil {
-		out.Error = err.Error()
-		return nil, out
+	// 图片下载同样走重试:连续下载多张时最容易碰到 429。
+	build := func() (*http.Request, error) {
+		r, err := http.NewRequest(http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		r.Header.Set("User-Agent", opt.UserAgent)
+		r.Header.Set("Accept", "image/*,*/*;q=0.8")
+		return r, nil
 	}
-	req.Header.Set("User-Agent", opt.UserAgent)
-	req.Header.Set("Accept", "image/*,*/*;q=0.8")
 
-	resp, err := client.Do(req)
+	resp, err := doWithRetry(client, build)
 	if err != nil {
 		out.Error = err.Error()
 		return nil, out
