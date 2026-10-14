@@ -208,12 +208,14 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 
 	// 3. 组装内容块
 	var contentImgs []mcp.Content
+	var pickedImgs []pickedImage
 	wantImages := cfg.maxImages > 0
 	if args.Images != nil {
 		wantImages = *args.Images && cfg.maxImages > 0
 	}
 	if wantImages && len(res.Images) > 0 {
 		imgs, notices := collectImages(cfg, fo, res.Images, url)
+		pickedImgs = imgs
 		out.ImagesSent = len(imgs)
 		out.Notice = append(out.Notice, notices...)
 		for _, im := range imgs {
@@ -228,7 +230,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 	}
 
 	// 文本要在收完路径之后再拼,因为落盘的图片需要在这里告诉模型怎么发出去
-	content := []mcp.Content{&mcp.TextContent{Text: composeText(res, out)}}
+	content := []mcp.Content{&mcp.TextContent{Text: composeText(res, out, pickedImgs)}}
 	content = append(content, contentImgs...)
 
 	return &mcp.CallToolResult{Content: content}, out, nil
@@ -236,9 +238,15 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 
 // pickedImage 是一张准备作为内容块返回的图片。
 type pickedImage struct {
-	mime string
-	data []byte // 原始图片字节(上 wire 时由 SDK 做 base64)
-	// path 是图片落盘后的绝对路径。为空表示没有启用落盘 ——
+	// url 是这张图的来源地址,也是「清单」里给调用方看的语义标签 ——
+	// 路径是 URL 的 sha1,单看文件名认不出是插图还是图标,URL 认得出来。
+	url    string
+	format string
+	width  int
+	height int
+	mime   string
+	data   []byte // 原始图片字节(上 wire 时由 SDK 做 base64)
+	// path 是图片落盘后的绝对路径。为空表示没落盘(未启用,或写入失败)——
 	// 内容块能让模型看见图,但要让调用方把图发出去还需要一个路径。
 	path string
 }
@@ -349,7 +357,11 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 		}
 
 		picked = append(picked, pickedImage{
-			mime: mimeOf(info.Format),
+			url:    abs,
+			format: info.Format,
+			width:  info.Width,
+			height: info.Height,
+			mime:   mimeOf(info.Format),
 			// 原始字节,不是 base64 文本。go-sdk 的 ImageContent.Data 是 []byte,
 			// 序列化时由 encoding/json 自己 base64 编码上 wire —— 预先编码一次
 			// 会让 wire 上出现 base64(base64(png)),接收方解一次只得到一段
@@ -395,7 +407,7 @@ func shortenURL(u string) string {
 }
 
 // composeText 把正文与元信息拼成给模型看的文本。
-func composeText(res *renderer.Result, out fetchOut) string {
+func composeText(res *renderer.Result, out fetchOut, imgs []pickedImage) string {
 	var b strings.Builder
 
 	if res.Title != "" {
@@ -422,12 +434,59 @@ func composeText(res *renderer.Result, out fetchOut) string {
 			fmt.Fprintf(&b, "- [%s](%s)\n", l.Title, l.URL)
 		}
 	}
+	// 图片清单放在最末尾,紧挨着调用方自己追加的东西。
+	b.WriteString(imageManifest(imgs))
 	// 图片路径作为数据返回,但这里【不】教调用方怎么写 MEDIA:。
 	// 那是 Hermes 自己的平台约定,不是 MCP 的一部分 —— 非 Hermes 客户端
 	// 看到它只会困惑。怎么用这个路径由客户端自己决定。
 	//
 	// (内容块已经让模型看见了图;路径是给需要落盘文件的调用方用的。)
 	return b.String()
+}
+
+// imageManifest 把本次返回的图片列成清单,供调用方按语义取用。
+//
+// 为什么必须有这份清单:内容块和路径是两条并行的信息,而两边都认不出图是什么。
+// 内容块只有字节,没有名字;路径是 URL 的 sha1,看不出是插图还是图标。调用方
+// 若只能靠「第几块」对齐,一旦某个环节丢弃或跳过其中一张,编号就全错 ——
+// 实测:维基「儿茶酚胺」返回 3 张,某个客户端拒收其中的 SVG 后只附上 2 张,
+// 模型随即把站点页眉的 LOGO 当成正文插图发了出去。
+//
+// URL 与像素尺寸一起给出,是因为这两项通常一眼就能区分图标与插图:同一页里
+// 站点 LOGO 是 100×100,而正文的合成通路图是 1000×581。
+func imageManifest(imgs []pickedImage) string {
+	if len(imgs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## 本页图片\n\n")
+	b.WriteString("顺序与本次返回的图片内容块一致。\n\n")
+	for i, im := range imgs {
+		fmt.Fprintf(&b, "%d. %s", i+1, im.url)
+		if d := describeImage(im); d != "" {
+			fmt.Fprintf(&b, " [%s]", d)
+		}
+		b.WriteString("\n")
+		if im.path != "" {
+			fmt.Fprintf(&b, "   文件:%s\n", im.path)
+		} else {
+			b.WriteString("   未落盘\n")
+		}
+	}
+	return b.String()
+}
+
+// describeImage 给出格式与像素尺寸 —— 判断一张图是不是插图,这两项比字节数可靠。
+// 尺寸解不出来时(SVG 等)只给格式。
+func describeImage(im pickedImage) string {
+	parts := make([]string, 0, 2)
+	if im.format != "" {
+		parts = append(parts, strings.ToUpper(im.format))
+	}
+	if im.width > 0 && im.height > 0 {
+		parts = append(parts, fmt.Sprintf("%d×%d", im.width, im.height))
+	}
+	return strings.Join(parts, " ")
 }
 
 // absoluteURL 把页面里的相对地址补全成绝对地址。
