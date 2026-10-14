@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"qjsdom/internal/cache"
 	"qjsdom/internal/fetcher"
 	"qjsdom/internal/renderer"
 )
@@ -37,6 +38,11 @@ func main() {
 		stats      = flag.Bool("stats", false, "把诊断信息打印到 stderr")
 		allowPriv  = flag.Bool("allow-private", false, "允许访问内网地址(仅本地测试)")
 		timeout    = flag.Duration("timeout", 20*time.Second, "抓取超时")
+		useCache   = flag.Bool("cache", false, "启用页面源码缓存(同一 URL 换 mode 重试时不必重新抓取)")
+		cacheDir   = flag.String("cache-dir", "", "缓存目录(默认:用户缓存目录/qjsdom)")
+		cacheTTL   = flag.Duration("cache-ttl", cache.DefaultTTL, "缓存有效期(默认 10m)")
+		cacheMax   = flag.Int64("cache-max", cache.DefaultMaxBytes, "缓存总容量上限,字节(默认 64MB)")
+		cacheClear = flag.Bool("cache-clear", false, "清空缓存后退出")
 		showVer    = flag.Bool("version", false, "打印版本")
 	)
 	// Go 的 flag 包在遇到第一个非 flag 参数时就停止解析:
@@ -61,6 +67,19 @@ func main() {
 	fetchOpts.Timeout = *timeout
 	fetchOpts.AllowPrivate = *allowPriv
 
+	// 缓存:两道防线(TTL + 容量上限)在 cache.Purge 里,写入前自动执行。
+	var c *cache.Cache
+	if *useCache || *cacheClear {
+		c = cache.New(cache.Options{Dir: *cacheDir, TTL: *cacheTTL, MaxBytes: *cacheMax})
+	}
+	if *cacheClear {
+		if err := c.Clear(); err != nil {
+			fatal("清空缓存失败: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "已清空缓存: %s\n", c.Dir())
+		return
+	}
+
 	if *filePath != "" {
 		b, err := os.ReadFile(*filePath)
 		if err != nil {
@@ -74,17 +93,35 @@ func main() {
 			flag.PrintDefaults()
 			os.Exit(2)
 		}
-		pageURL = flag.Arg(0)
+		reqURL := flag.Arg(0)
+		pageURL = reqURL
 
-		res, err := fetcher.Fetch(pageURL, fetchOpts)
-		if err != nil {
-			fatal("%v", err)
+		// 缓存命中:抓取与渲染是分开的两步,缓存的是 HTML 源码,
+		// 所以换 mode 重试时只需重跑渲染,不必重新抓取。
+		if c != nil {
+			if h, ok := c.Get(reqURL); ok {
+				html = h
+				if *stats {
+					fmt.Fprintf(os.Stderr, "[cache]  命中  %s\n", c.Dir())
+				}
+			}
 		}
-		html = res.HTML
-		pageURL = res.URL
-		if *stats {
-			fmt.Fprintf(os.Stderr, "[fetch]  HTTP %d  %.1f KB  %.2fs  %s\n",
-				res.StatusCode, float64(res.Bytes)/1024, res.Elapsed.Seconds(), res.URL)
+		if html == "" {
+			res, err := fetcher.Fetch(reqURL, fetchOpts)
+			if err != nil {
+				fatal("%v", err)
+			}
+			html = res.HTML
+			pageURL = res.URL
+			if *stats {
+				fmt.Fprintf(os.Stderr, "[fetch]  HTTP %d  %.1f KB  %.2fs  %s\n",
+					res.StatusCode, float64(res.Bytes)/1024, res.Elapsed.Seconds(), res.URL)
+			}
+			if c != nil {
+				if err := c.Put(reqURL, html); err != nil && *stats {
+					fmt.Fprintf(os.Stderr, "[cache]  未缓存: %v\n", err)
+				}
+			}
 		}
 	}
 
@@ -192,6 +229,9 @@ func reorderArgs(args []string) []string {
 		"-timeout":    true,
 		"-images-dir": true,
 		"-max-images": true,
+		"-cache-dir":  true,
+		"-cache-ttl":  true,
+		"-cache-max":  true,
 	}
 
 	var flags, positional []string
