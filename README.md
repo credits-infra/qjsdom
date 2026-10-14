@@ -80,18 +80,15 @@ article + -selector "#mw-content-text": 16119 字   ← 干净正文
 
 ### 常用站点精调参考
 
-| 站点 | selector | 状态 |
-|---|---|---|
-| 维基百科 | `#mw-content-text` | ✅ 已实测 |
+维基百科用 `#mw-content-text`(已实测:自动找 17111 字,指定后 16119 字,
+差的正是导航部分)。其它站点先用 `-mode all` 看整页结构,或在浏览器里右键
+「检查」找到正文容器的 id / class,再传给 `-selector`。
 
-其它站点请自行确认:先用 `-mode all` 看一眼整页结构,或在浏览器里
-右键「检查」找到正文容器的 id / class。
-
-(刻意只列验证过的 —— 未经实测的选择器写进来等于编造。)
+刻意只列验证过的选择器 —— 未经实测就写进文档,等于编造。
 
 ## 图片
 
-页面图片**会**被下载 —— 图片内容是有价值的产出:支持图像输入的模型
+qjsdom **会下载**页面图片 —— 图片内容是有价值的产出:支持图像输入的模型
 (Gemini 等)能直接看图,课本插图里的数值、箭头、流向、调控关系都在图里。
 
 ```bash
@@ -107,6 +104,29 @@ qjsdom -download-images -images-dir /tmp/imgs -mode article <url>
 - **`new Image()` 会真的去 fetch**(取尺寸,不保留像素)——
   页面脚本普遍用它做预加载和布局判断,给假数据会让它们走进错误分支。
 - **视频 / 音频刻意不实现**:体积大、处理慢,不是我们要的信息载体。
+
+## 缓存
+
+同一个 URL 换 mode 重试时,qjsdom 不必重新抓取 —— 这正是「选错 mode 就换一个
+再试」能成立的前提。它缓存的是 **HTML 源码**而不是提取结果:抓取与渲染本就是
+分开的两步,所以换 mode 只重跑渲染。
+
+```bash
+qjsdom -cache -mode article <url>    # 抓取并缓存
+qjsdom -cache -mode all <url>        # 命中缓存,只重跑渲染
+```
+
+两道防线防止缓存挤爆磁盘:
+
+| 防线 | 默认值 | 作用 |
+|---|---|---|
+| TTL | 10 分钟 | 超时的条目视为失效 —— 网页会变,不能无限信任 |
+| 容量上限 | 64 MB | 超出后按最久未访问淘汰(LRU) |
+
+qjsdom 在每次写入前后各清理一次,所以长期运行也不会无限增长。单条超过总容量
+上限的页面会被拒绝缓存 —— 不值得为它挤掉整个缓存。目录权限 0700,文件 0600。
+
+用 `-cache-clear` 清空缓存,或用 `-cache-dir` / `-cache-ttl` / `-cache-max` 调整。
 
 ## 关键设计决策(都有实测依据)
 
@@ -161,9 +181,9 @@ Node。linkedom 零 Node 依赖,打包后可直接注入 —— 页面脚本由�
 
 ### 5. 异常绝不中断整页
 
-页面脚本本来就该「跑得动就跑、跑不动跳过」。单个 `<script>` 的错误被逐个
-捕获并记录;DOM 库自身出错时退回「粗暴去标签」的文本提取,结果里标
-`degraded: true`,而不是返回错误。
+页面脚本本来就该「跑得动就跑、跑不动跳过」。runner 逐个捕获并记录每个
+`<script>` 的错误;DOM 库自身出错时,它退回「粗暴去标签」的文本提取,
+结果里标 `degraded: true`,而不是返回错误。
 
 注意 `linkedom` 把 `navigator` / `location` / `window` 定义为**访问器属性** ——
 直接赋值会触发它的 setter,而 setter 内部可能引用未 stub 的 API
@@ -194,6 +214,11 @@ go build -o qjsdom ./cmd/qjsdom
 -max-images int     最多下载几张图片(默认 20)
 -stats              诊断信息打印到 stderr
 -timeout duration   抓取超时(默认 20s)
+-cache              启用页面源码缓存(同一 URL 换 mode 重试时不必重新抓取)
+-cache-dir string   缓存目录(默认:用户缓存目录/qjsdom)
+-cache-ttl duration 缓存有效期(默认 10m)
+-cache-max int      缓存总容量上限,字节(默认 64MB)
+-cache-clear        清空缓存后退出
 -allow-private      允许访问内网地址(仅本地测试)
 -version            打印版本
 ```
@@ -245,7 +270,6 @@ testdata/                   离线测试页
 - [ ] 注入 Go 侧实现的 `fetch`,支持 `<script src>` 与页面内 XHR
 - [ ] `<script src>` 加载与执行
 - [ ] qjs `Compile()` 字节码缓存,降低每页注入开销
-- [ ] HTML 缓存:同 URL 换 mode 重试时不必重新抓取
 - [ ] `gbk`/`gb2312` 解码
 - [ ] 输出 Markdown 而非纯文本
 - [ ] 常驻服务模式(供 MCP / 其它进程调用)
