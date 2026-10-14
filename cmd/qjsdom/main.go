@@ -38,7 +38,12 @@ func main() {
 		timeout    = flag.Duration("timeout", 20*time.Second, "抓取超时")
 		showVer    = flag.Bool("version", false, "打印版本")
 	)
-	flag.Parse()
+	// Go 的 flag 包在遇到第一个非 flag 参数时就停止解析:
+	//   qjsdom <url> -json   → -json 被静默丢掉
+	//   qjsdom -json <url>   → 正常
+	// 这个坑太隐蔽,所以先把参数重排成「flags 在前、位置参数在后」。
+	// 注意必须放在所有 flag.Xxx() 定义之后。
+	flag.CommandLine.Parse(reorderArgs(os.Args[1:]))
 
 	if *showVer {
 		fmt.Println(renderer.EngineVersion)
@@ -166,4 +171,43 @@ func shorten(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// reorderArgs 让 flags 可以写在位置参数之后。
+//
+// Go 标准库的 flag 包在遇到第一个非 flag 参数时停止解析,于是
+// `qjsdom <url> -json` 里的 -json 会被静默丢弃 —— 这个坑很隐蔽。
+// 这里把参数重排成「所有 flags 在前、位置参数在后」。
+//
+// 注意:需要维护 valueFlags 集合,否则无法判断某个 flag 后面跟的是
+// 它的值还是位置参数。
+func reorderArgs(args []string) []string {
+	valueFlags := map[string]bool{
+		"-selector":   true,
+		"-max":        true,
+		"-file":       true,
+		"-timeout":    true,
+		"-images-dir": true,
+		"-max-images": true,
+	}
+
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if len(a) > 1 && a[0] == '-' {
+			flags = append(flags, a)
+			// 形如 -max=100 自带值;否则看它是否需要下一个参数作为值
+			if !strings.Contains(a, "=") && valueFlags[a] && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		positional = append(positional, a)
+	}
+	return append(flags, positional...)
 }
