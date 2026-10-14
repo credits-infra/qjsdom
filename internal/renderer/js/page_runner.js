@@ -133,12 +133,48 @@
         if (links.length >= 200) break;
       }
     } catch (e) {}
+
+    // 图片:必须处理【懒加载】。
+    // 实测:维基条目的 <img> 里 src 是 1x1 的 base64 占位 GIF,真实地址在
+    // data-src 等属性里 —— 只看 src 会一张都收集不到。
+    // 另外 <picture><source srcset> 也是常见来源。
     const images = [];
+    const pushImg = (u) => {
+      if (!u) return;
+      u = String(u).trim();
+      if (!u || u.startsWith("data:") || u.startsWith("javascript:")) return;
+      if (images.length < 100) images.push(u);
+    };
+    const firstOfSrcset = (ss) => {
+      if (!ss) return "";
+      const first = String(ss).split(",")[0].trim().split(/\s+/)[0];
+      return first || "";
+    };
     try {
-      for (const im of document.querySelectorAll("img[src]")) {
-        const srcv = im.getAttribute("src");
-        if (srcv) images.push(srcv);
-        if (images.length >= 50) break;
+      for (const im of document.querySelectorAll("img")) {
+        let u = im.getAttribute("src");
+        // src 缺失,或是内联占位图(懒加载常用 1x1 GIF) → 去懒加载属性里找
+        const isPlaceholder = !u || (u.startsWith("data:") && u.length < 300);
+        if (isPlaceholder) {
+          for (const attr of ["data-src", "data-original", "data-lazy-src", "data-lazyload",
+                              "data-actualsrc", "data-echo", "data-url", "data-image"]) {
+            const v = im.getAttribute(attr);
+            if (v && !v.startsWith("data:")) { u = v; break; }
+          }
+        }
+        // 仍无 → srcset 取第一个候选
+        if (!u || u.startsWith("data:")) {
+          u = firstOfSrcset(im.getAttribute("srcset") || im.getAttribute("data-srcset"));
+        }
+        pushImg(u);
+        if (images.length >= 100) break;
+      }
+      // <picture> 里的 <source srcset>
+      if (images.length < 100) {
+        for (const s of document.querySelectorAll("source[srcset], source[data-srcset]")) {
+          pushImg(firstOfSrcset(s.getAttribute("srcset") || s.getAttribute("data-srcset")));
+          if (images.length >= 100) break;
+        }
       }
     } catch (e) {}
 
