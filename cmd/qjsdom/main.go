@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,6 +30,9 @@ func main() {
 		filePath   = flag.String("file", "", "渲染本地 HTML 文件,不联网")
 		noScripts  = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
 		noImages   = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
+		dlImages   = flag.Bool("download-images", false, "下载页面图片到 -images-dir(交给模型看)")
+		imgDir     = flag.String("images-dir", "", "图片保存目录(配合 -download-images)")
+		maxImages  = flag.Int("max-images", 20, "最多下载几张图片")
 		stats      = flag.Bool("stats", false, "把诊断信息打印到 stderr")
 		allowPriv  = flag.Bool("allow-private", false, "允许访问内网地址(仅本地测试)")
 		timeout    = flag.Duration("timeout", 20*time.Second, "抓取超时")
@@ -78,12 +82,20 @@ func main() {
 		}
 	}
 
+	// 下载图片需要明确的保存目录 —— 不默认写到当前工作目录,避免意外落文件
+	if *dlImages && *imgDir == "" {
+		fatal("-download-images 需要配合 -images-dir 指定保存目录")
+	}
+
 	out, err := renderer.Render(html, pageURL, renderer.Options{
-		Selector:      *selector,
-		MaxTextLen:    *maxLen,
-		RunScripts:    !*noScripts,
-		DisableImages: *noImages,
-		FetchOptions:  fetchOpts,
+		Selector:       *selector,
+		MaxTextLen:     *maxLen,
+		RunScripts:     !*noScripts,
+		DisableImages:  *noImages,
+		FetchOptions:   fetchOpts,
+		DownloadImages: *dlImages,
+		ImagesDir:      *imgDir,
+		ImageLimits:    fetcher.DownloadLimits{MaxImages: *maxImages},
 	})
 	if err != nil {
 		fatal("渲染失败: %v", err)
@@ -100,6 +112,27 @@ func main() {
 					break
 				}
 				fmt.Fprintf(os.Stderr, "         - %s\n", e)
+			}
+		}
+		if len(out.ImageFiles) > 0 {
+			okN := 0
+			for _, im := range out.ImageFiles {
+				if im.Path != "" {
+					okN++
+				}
+			}
+			fmt.Fprintf(os.Stderr, "[images] 下载成功 %d/%d 张\n", okN, len(out.ImageFiles))
+			for i, im := range out.ImageFiles {
+				if i >= 5 {
+					fmt.Fprintf(os.Stderr, "         …另有 %d 张\n", len(out.ImageFiles)-5)
+					break
+				}
+				if im.Path != "" {
+					fmt.Fprintf(os.Stderr, "         ✅ %s  %dx%d  %d KB\n",
+						filepath.Base(im.Path), im.Width, im.Height, im.Bytes>>10)
+				} else {
+					fmt.Fprintf(os.Stderr, "         ❌ %s  → %s\n", shorten(im.URL, 46), im.Error)
+				}
 			}
 		}
 	}
@@ -125,4 +158,12 @@ func main() {
 func fatal(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "qjsdom: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// shorten 截断字符串,用于日志输出。
+func shorten(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

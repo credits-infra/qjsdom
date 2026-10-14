@@ -55,6 +55,16 @@ type Options struct {
 	DisableImages bool
 	// FetchOptions 供图片探测使用的网络参数。
 	FetchOptions fetcher.Options
+
+	// DownloadImages 是否把页面里的 <img> 下载到 ImagesDir。
+	//
+	// 图片内容是有价值的产出:模型(Gemini 等)支持图像输入,能直接看图。
+	// 视频/音频刻意不实现 —— 体积大、处理慢,且不是我们要的信息载体。
+	DownloadImages bool
+	// ImagesDir 图片保存目录(DownloadImages 为 true 时生效)。
+	ImagesDir string
+	// ImageLimits 单页图片下载的资源上限(零值用 DefaultDownloadLimits)。
+	ImageLimits fetcher.DownloadLimits
 }
 
 // Result 是渲染结果。字段名对应 page_runner.js 的返回 JSON。
@@ -71,6 +81,10 @@ type Result struct {
 	// Degraded 为 true 表示 DOM 解析失败、退回了粗暴的文本提取。
 	// 这种情况仍然会返回结果(而不是报错),调用方应按需降级处理。
 	Degraded bool `json:"degraded"`
+
+	// ImageFiles 是已下载的页面图片(仅 DownloadImages 为 true 时填充)。
+	// 每项含本地路径 —— 上层可直接把它交给支持图像输入的模型。
+	ImageFiles []fetcher.ImageFile `json:"imageFiles,omitempty"`
 
 	// 以下为 Go 侧补充的诊断信息
 	Elapsed time.Duration `json:"-"`
@@ -133,7 +147,55 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 		out.Text = out.Text[:opt.MaxTextLen] + "…(已截断)"
 	}
 	out.Elapsed = time.Since(start)
+
+	// 按需下载页面图片 —— 图片内容是要交给模型看的产出
+	if opt.DownloadImages {
+		downloadPageImages(&out, pageURL, opt)
+	}
+
 	return &out, nil
+}
+
+// downloadPageImages 把页面里的 <img> 下载到 opt.ImagesDir。
+//
+// 单张失败不影响其它图片,更不影响正文 —— 结果里带 Error 字段即可。
+func downloadPageImages(out *Result, pageURL string, opt Options) {
+	lim := opt.ImageLimits
+	if lim.MaxImages <= 0 {
+		lim = fetcher.DefaultDownloadLimits()
+	}
+	fo := opt.FetchOptions
+	if fo.UserAgent == "" {
+		fo = fetcher.DefaultOptions()
+	}
+
+	var base *url.URL
+	if pageURL != "" {
+		base, _ = url.Parse(pageURL)
+	}
+
+	seen := make(map[string]bool)
+	for _, raw := range out.Images {
+		if len(out.ImageFiles) >= lim.MaxImages {
+			break
+		}
+		// 内联 data: URL 本身已含数据,不必再下载
+		if strings.HasPrefix(raw, "data:") {
+			continue
+		}
+		abs := raw
+		if base != nil && !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+			if u, err := url.Parse(raw); err == nil {
+				abs = base.ResolveReference(u).String()
+			}
+		}
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
+		out.ImageFiles = append(out.ImageFiles,
+			fetcher.DownloadImage(abs, opt.ImagesDir, fo, lim.MaxBytesPer))
+	}
 }
 
 // buildRunner 把三个占位符替换为 JSON 字面量。

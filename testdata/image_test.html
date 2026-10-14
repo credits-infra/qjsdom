@@ -3,6 +3,11 @@
 <head><title>Image fetch 测试页</title></head>
 <body>
 <h1>Image 网络探测测试</h1>
+<h2>静态 img 标签</h2>
+<img src="https://www.wikipedia.org/portal/wikipedia.org/assets/img/Wikipedia-logo-v2.png" alt="wiki logo">
+<img src="/portal/wikipedia.org/assets/img/Wikipedia-logo-v2.png" alt="相对路径">
+<img src="https://www.wikipedia.org/NO_SUCH_IMAGE_xyz.png" alt="不存在的图">
+
 <div id="out">等待脚本执行…</div>
 <script>
 var log = [];
