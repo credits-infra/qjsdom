@@ -242,6 +242,12 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 	type failure struct{ url, reason string }
 	var failures []failure
 
+	// URL 去重。CLI 侧一直有,这里漏了 —— 实测维基条目的 87 个 <img> 地址
+	// 里只有 64 个是唯一的(同一张图在导航、正文、页脚各出现一次)。
+	// 重复下载既浪费带宽,也更容易触发站点限流。
+	seen := make(map[string]bool)
+	deduped := 0
+
 	base := pageURL
 	for _, raw := range urls {
 		if len(picked) >= cfg.maxImages {
@@ -251,6 +257,11 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 		if abs == "" {
 			continue
 		}
+		if seen[abs] {
+			deduped++
+			continue
+		}
+		seen[abs] = true
 
 		data, info := fetcher.FetchImageBytes(abs, fo, cfg.maxImageByte)
 		if info.Error != "" {
@@ -282,6 +293,9 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 		})
 	}
 
+	if deduped > 0 {
+		notices = append(notices, fmt.Sprintf("跳过了 %d 个重复的图片地址", deduped))
+	}
 	if skippedSmall > 0 {
 		notices = append(notices, fmt.Sprintf("跳过了 %d 张过小的图片(图标/占位符)", skippedSmall))
 	}
