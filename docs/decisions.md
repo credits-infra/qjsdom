@@ -256,6 +256,27 @@ This cost me real time. A Wikipedia image download appeared to be broken when th
 actual problem was that `-download-images` had never taken effect. The tool now
 reorders its arguments so flags can appear anywhere.
 
+## Keep the transport out of the tool
+
+The MCP server returns data. It does not tell the caller how to deliver that data.
+
+An early draft appended `MEDIA:<path>` lines to the response text, because that
+is how Hermes sends a file to a chat platform. The user caught it: `MEDIA:` is a
+Hermes convention, not an MCP one. A client that is not Hermes receives an
+instruction it cannot execute, and the same path would not resolve on a remote
+machine in any case.
+
+The split now:
+
+| Layer | Provides |
+| --- | --- |
+| MCP server | text, image content blocks, absolute paths |
+| The client | whatever it takes to show those images to a person |
+
+The general rule, which is why this is worth writing down: a tool that reaches
+across a protocol boundary should speak that protocol and leave platform
+conventions to the platform.
+
 ## Paths not taken
 
 **markitdown** converts many formats to Markdown and looks like a natural fit. It

@@ -73,7 +73,21 @@ Environment variables:
 | `QJSDOM_MIN_IMAGE_SIDE` | `100` | Smaller images count as icons and get dropped |
 | `QJSDOM_MIN_IMAGE_BYTES` | `5120` | Smaller images get dropped |
 | `QJSDOM_MAX_IMAGE_BYTES` | 2 MB | Per-image size cap |
+| `QJSDOM_SAVE_IMAGES_DIR` | off | Write images here and report their paths. See below |
 | `QJSDOM_DEBUG` | off | Set to `1` for diagnostics on stderr |
+
+### Sending the images to a user
+
+An image content block lets the model see an illustration. It does not let your
+program send that illustration to a user, because the bytes never reach the
+filesystem.
+
+Set `QJSDOM_SAVE_IMAGES_DIR` and the server writes each returned image there and
+reports absolute paths in `image_paths`. What you do with those paths is up to
+your client: post them, upload them, or ignore them.
+
+The server does not tell you how to send a file. That is a platform decision, and
+the right answer differs per client.
 
 ## What it will not do
 
