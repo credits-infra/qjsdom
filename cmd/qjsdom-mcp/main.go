@@ -223,9 +223,10 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 				MIMEType: im.mime,
 				Data:     im.data,
 			})
-			if im.path != "" {
-				out.ImagePaths = append(out.ImagePaths, im.path)
-			}
+			// 下标必须与内容块严格对齐:image_paths[i] 就是第 i 个内容块的路径。
+			// 落盘失败时留空串占位 —— 跳过它会让后面每一条都错位一位,
+			// 而调用方正是靠这个下标把图和路径对上。
+			out.ImagePaths = append(out.ImagePaths, im.path)
 		}
 	}
 
