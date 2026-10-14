@@ -126,3 +126,175 @@ if (typeof globalThis.URLSearchParams === "undefined") {
     toString() { return this._p.map(([a, b]) => a + "=" + b).join("&"); }
   };
 }
+
+// ============================================================================
+// 以下为「高频缺失 Web API」的最小 stub。
+//
+// 实测动机:Google 搜索页让整个渲染挂掉,原因只是缺一个 Image ——
+// 而且 linkedom 内部就会引用它(不是页面脚本的问题,关掉脚本照样崩)。
+// 原则:只补「能让页面脚本继续跑下去」所需的最小行为;
+// 视频/音频/Canvas 这类我们不需要结果的东西,给个空壳就行。
+// ============================================================================
+
+// ---- Image:linkedom 内部与页面脚本都会用 ----
+// 完整版(真的去 fetch 取尺寸)在后续提交里由 Go 侧注入替换。
+if (typeof globalThis.Image === "undefined") {
+  globalThis.Image = class Image {
+    constructor(width, height) {
+      this.width = width || 0;
+      this.height = height || 0;
+      this.naturalWidth = 0;
+      this.naturalHeight = 0;
+      this.complete = false;
+      this.crossOrigin = null;
+      this._src = "";
+      this._listeners = {};
+    }
+    get src() { return this._src; }
+    set src(v) {
+      this._src = String(v);
+      // 没有网络层时:立即以「加载失败」收场,避免页面脚本永远等待
+      this.complete = true;
+      const ev = { type: "error", target: this };
+      this._fire("error", ev);
+    }
+    addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
+    removeEventListener(t, fn) {
+      const a = this._listeners[t];
+      if (a) this._listeners[t] = a.filter((f) => f !== fn);
+    }
+    _fire(t, ev) {
+      for (const fn of (this._listeners[t] || [])) { try { fn(ev); } catch (e) {} }
+      const h = this["on" + t];
+      if (typeof h === "function") { try { h(ev); } catch (e) {} }
+    }
+    decode() { return Promise.resolve(); }
+  };
+}
+
+// ---- 存储:页面脚本常用来做特性检测,给内存实现即可 ----
+function makeStorage() {
+  const m = new Map();
+  return {
+    getItem: (k) => (m.has(String(k)) ? m.get(String(k)) : null),
+    setItem: (k, v) => { m.set(String(k), String(v)); },
+    removeItem: (k) => { m.delete(String(k)); },
+    clear: () => { m.clear(); },
+    key: (i) => Array.from(m.keys())[i] ?? null,
+    get length() { return m.size; },
+  };
+}
+if (typeof globalThis.localStorage === "undefined") globalThis.localStorage = makeStorage();
+if (typeof globalThis.sessionStorage === "undefined") globalThis.sessionStorage = makeStorage();
+
+// ---- history:SPA 路由用;只做不报错的最小实现 ----
+if (typeof globalThis.history === "undefined") {
+  globalThis.history = {
+    length: 1,
+    state: null,
+    scrollRestoration: "auto",
+    pushState() {}, replaceState() {}, back() {}, forward() {}, go() {},
+  };
+}
+
+// ---- 定时与帧:页面脚本普遍依赖 ----
+if (typeof globalThis.requestAnimationFrame === "undefined") {
+  globalThis.requestAnimationFrame = (cb) => setTimeout(() => { try { cb(Date.now()); } catch (e) {} }, 16);
+  globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+}
+if (typeof globalThis.requestIdleCallback === "undefined") {
+  globalThis.requestIdleCallback = (cb) => setTimeout(() => { try { cb({ didTimeout: false, timeRemaining: () => 0 }); } catch (e) {} }, 1);
+  globalThis.cancelIdleCallback = (id) => clearTimeout(id);
+}
+
+// ---- 事件与观察者 ----
+if (typeof globalThis.CustomEvent === "undefined") {
+  globalThis.CustomEvent = class CustomEvent {
+    constructor(type, opts) {
+      this.type = type;
+      this.detail = (opts && opts.detail) !== undefined ? opts.detail : null;
+      this.bubbles = !!(opts && opts.bubbles);
+      this.cancelable = !!(opts && opts.cancelable);
+      this.defaultPrevented = false;
+    }
+    preventDefault() { this.defaultPrevented = true; }
+    stopPropagation() {}
+  };
+}
+if (typeof globalThis.MutationObserver === "undefined") {
+  globalThis.MutationObserver = class MutationObserver {
+    constructor(cb) { this._cb = cb; }
+    observe() {} disconnect() {} takeRecords() { return []; }
+  };
+}
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  globalThis.IntersectionObserver = class IntersectionObserver {
+    constructor(cb) { this._cb = cb; }
+    observe() {} unobserve() {} disconnect() {} takeRecords() { return []; }
+    get root() { return null; } get rootMargin() { return "0px"; } get thresholds() { return [0]; }
+  };
+}
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class ResizeObserver {
+    constructor(cb) { this._cb = cb; }
+    observe() {} unobserve() {} disconnect() {}
+  };
+}
+
+// ---- 性能与屏幕:只读数值,给零值即可 ----
+if (typeof globalThis.performance === "undefined") {
+  const t0 = Date.now();
+  globalThis.performance = {
+    now: () => Date.now() - t0,
+    timeOrigin: t0,
+    mark() {}, measure() {}, clearMarks() {}, clearMeasures() {},
+    getEntries: () => [], getEntriesByName: () => [], getEntriesByType: () => [],
+  };
+}
+if (typeof globalThis.screen === "undefined") {
+  globalThis.screen = { width: 1280, height: 800, availWidth: 1280, availHeight: 800, colorDepth: 24, pixelDepth: 24 };
+}
+if (typeof globalThis.devicePixelRatio === "undefined") globalThis.devicePixelRatio = 1;
+
+// ---- 样式查询:不实现 CSS 计算,返回空对象即可(调用方通常只读几个属性)----
+if (typeof globalThis.getComputedStyle === "undefined") {
+  globalThis.getComputedStyle = () => ({
+    getPropertyValue: () => "",
+    length: 0,
+    item: () => "",
+  });
+}
+
+// ---- 媒体:我们不需要结果,给空壳避免页面脚本报错 ----
+if (typeof globalThis.Audio === "undefined") {
+  globalThis.Audio = class Audio {
+    constructor(src) { this.src = src || ""; this.paused = true; this.volume = 1; }
+    play() { return Promise.resolve(); }
+    pause() {}
+    addEventListener() {} removeEventListener() {}
+  };
+}
+if (typeof globalThis.HTMLMediaElement === "undefined") {
+  // linkedom 已有元素类;这里只兜底,避免 typeof 检测炸掉
+  globalThis.HTMLMediaElement = function HTMLMediaElement() {};
+}
+
+// ---- 其它常见构造器兜底 ----
+if (typeof globalThis.DOMParser === "undefined") {
+  globalThis.DOMParser = class DOMParser {
+    parseFromString(str) {
+      try {
+        return Linkedom.parseHTML(String(str));
+      } catch (e) {
+        return null;
+      }
+    }
+  };
+}
+if (typeof globalThis.XMLHttpRequest === "undefined") {
+  globalThis.XMLHttpRequest = class XMLHttpRequest {
+    constructor() { this.readyState = 0; this.status = 0; this.responseText = ""; }
+    open() {} setRequestHeader() {} send() {} abort() {}
+    addEventListener() {} removeEventListener() {}
+  };
+}
