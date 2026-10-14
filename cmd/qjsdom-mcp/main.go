@@ -237,6 +237,11 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 	var notices []string
 	skippedSmall, skippedBig, failed := 0, 0, 0
 
+	// 记下失败原因 —— 只报「N 张失败」等于没说,调用方无法判断是网络问题、
+	// 被站点拒绝、还是格式不支持。这里保留前几条,让排查有线索。
+	type failure struct{ url, reason string }
+	var failures []failure
+
 	base := pageURL
 	for _, raw := range urls {
 		if len(picked) >= cfg.maxImages {
@@ -250,6 +255,9 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 		data, info := fetcher.FetchImageBytes(abs, fo, cfg.maxImageByte)
 		if info.Error != "" {
 			failed++
+			if len(failures) < 5 {
+				failures = append(failures, failure{abs, info.Error})
+			}
 			continue
 		}
 		// 图标过滤:尺寸与字节双阈值。
@@ -281,9 +289,26 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 		notices = append(notices, fmt.Sprintf("跳过了 %d 张过大的图片", skippedBig))
 	}
 	if failed > 0 {
-		notices = append(notices, fmt.Sprintf("%d 张图片下载失败", failed))
+		reasons := make([]string, 0, len(failures))
+		for _, f := range failures {
+			reasons = append(reasons, fmt.Sprintf("%s → %s", shortenURL(f.url), f.reason))
+		}
+		more := ""
+		if failed > len(failures) {
+			more = fmt.Sprintf("(另有 %d 张未列出)", failed-len(failures))
+		}
+		notices = append(notices,
+			fmt.Sprintf("%d 张图片下载失败%s: %s", failed, more, strings.Join(reasons, "; ")))
 	}
 	return picked, notices
+}
+
+// shortenURL 把 URL 缩短到便于在提示里显示的长度。
+func shortenURL(u string) string {
+	if len(u) <= 60 {
+		return u
+	}
+	return u[:57] + "…"
 }
 
 // composeText 把正文与元信息拼成给模型看的文本。
