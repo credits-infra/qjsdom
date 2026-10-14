@@ -59,25 +59,57 @@ func DefaultDownloadLimits() DownloadLimits {
 // 任何失败都返回带 Error 的 ImageFile(而不是 Go error)—— 单张图失败
 // 不应该影响整页处理。
 func DownloadImage(rawURL, dir string, opt Options, maxBytes int64) ImageFile {
+	data, out := fetchImageData(rawURL, opt, maxBytes)
+	if out.Error != "" || dir == "" {
+		return out
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		out.Error = "创建目录失败: " + err.Error()
+		return out
+	}
+	// 文件名用 URL 的 sha1,避免路径穿越与重名
+	sum := sha1.Sum([]byte(out.URL))
+	name := hex.EncodeToString(sum[:])[:16] + extFromFormat(out.Format)
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		out.Error = "写入失败: " + err.Error()
+		return out
+	}
+	out.Path = path
+	return out
+}
+
+// FetchImageBytes 下载单张图片并返回字节,不落盘。
+//
+// MCP 服务需要把图片作为内容块返回(base64),所以它用这个而不是
+// DownloadImage。返回的 ImageFile 里 Path 为空,尺寸与格式照常填。
+func FetchImageBytes(rawURL string, opt Options, maxBytes int64) ([]byte, ImageFile) {
+	return fetchImageData(rawURL, opt, maxBytes)
+}
+
+// fetchImageData 是 DownloadImage 与 FetchImageBytes 的共同实现:
+// 取回图片字节并解析尺寸,不碰文件系统。
+func fetchImageData(rawURL string, opt Options, maxBytes int64) ([]byte, ImageFile) {
 	out := ImageFile{URL: rawURL}
 
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
 		out.Error = "URL 解析失败: " + err.Error()
-		return out
+		return nil, out
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		out.Error = fmt.Sprintf("不支持的协议: %q", u.Scheme)
-		return out
+		return nil, out
 	}
 	if u.Host == "" {
 		out.Error = "URL 缺少主机名"
-		return out
+		return nil, out
 	}
 	if !opt.AllowPrivate {
 		if err := guardSSRF(u.Hostname()); err != nil {
 			out.Error = err.Error()
-			return out
+			return nil, out
 		}
 	}
 
@@ -105,7 +137,7 @@ func DownloadImage(rawURL, dir string, opt Options, maxBytes int64) ImageFile {
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		out.Error = err.Error()
-		return out
+		return nil, out
 	}
 	req.Header.Set("User-Agent", opt.UserAgent)
 	req.Header.Set("Accept", "image/*,*/*;q=0.8")
@@ -113,56 +145,39 @@ func DownloadImage(rawURL, dir string, opt Options, maxBytes int64) ImageFile {
 	resp, err := client.Do(req)
 	if err != nil {
 		out.Error = err.Error()
-		return out
+		return nil, out
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		out.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
-		return out
+		return nil, out
 	}
 
 	// 只接受图片类型 —— 有些站点会用脚本/HTML 伪装成图片地址
 	ct := strings.ToLower(resp.Header.Get("Content-Type"))
 	if ct != "" && !strings.Contains(ct, "image/") {
 		out.Error = fmt.Sprintf("非图片内容类型: %s", ct)
-		return out
+		return nil, out
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		out.Error = "读取失败: " + err.Error()
-		return out
+		return nil, out
 	}
 	if int64(len(data)) > maxBytes {
 		out.Error = fmt.Sprintf("超过单张上限(%d MB)", maxBytes>>20)
-		return out
+		return nil, out
 	}
 	if len(data) == 0 {
 		out.Error = "空响应"
-		return out
+		return nil, out
 	}
 
 	// 扩展名优先按内容嗅探,其次看 Content-Type
 	ext := sniffImageExt(data, ct)
 	out.Format = strings.TrimPrefix(ext, ".")
-
-	if dir != "" {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			out.Error = "创建目录失败: " + err.Error()
-			return out
-		}
-		// 文件名用 URL 的 sha1,避免路径穿越与重名
-		sum := sha1.Sum([]byte(u.String()))
-		name := hex.EncodeToString(sum[:])[:16] + ext
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			out.Error = "写入失败: " + err.Error()
-			return out
-		}
-		out.Path = path
-	}
-
 	out.Bytes = int64(len(data))
 
 	// 尽力解析尺寸;SVG/WebP 等未注册格式解不出来也不影响保存
@@ -171,7 +186,26 @@ func DownloadImage(rawURL, dir string, opt Options, maxBytes int64) ImageFile {
 		out.Height = cfg.Height
 	}
 
-	return out
+	return data, out
+}
+
+// extFromFormat 把 ImageFile.Format(不带点)转回扩展名。
+func extFromFormat(format string) string {
+	switch strings.ToLower(format) {
+	case "jpeg", "jpg":
+		return ".jpg"
+	case "png":
+		return ".png"
+	case "gif":
+		return ".gif"
+	case "webp":
+		return ".webp"
+	case "svg":
+		return ".svg"
+	case "":
+		return ".jpg"
+	}
+	return "." + strings.ToLower(format)
 }
 
 // sniffImageExt 判断图片扩展名。
