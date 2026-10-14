@@ -70,8 +70,8 @@ Environment variables:
 | `QJSDOM_TIMEOUT` | `20s` | Fetch timeout |
 | `QJSDOM_MAX_TEXT` | `60000` | Truncate the text at this many characters |
 | `QJSDOM_MAX_IMAGES` | `5` | Images per response. `0` returns none |
-| `QJSDOM_MIN_IMAGE_SIDE` | `100` | Smaller images count as icons and get dropped |
-| `QJSDOM_MIN_IMAGE_BYTES` | `5120` | Smaller images get dropped |
+| `QJSDOM_MIN_IMAGE_SIDE` | `100` | Shorter side of an image that has known dimensions; smaller images count as icons and get dropped |
+| `QJSDOM_MIN_IMAGE_BYTES` | `5120` | Applied only when the dimensions cannot be read, such as for SVG |
 | `QJSDOM_MAX_IMAGE_BYTES` | 2 MB | Per-image size cap |
 | `QJSDOM_SAVE_IMAGES_DIR` | off | Write images here and report their paths. See below |
 | `QJSDOM_DEBUG` | off | Set to `1` for diagnostics on stderr |

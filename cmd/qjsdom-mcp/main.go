@@ -329,14 +329,21 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 			}
 			continue
 		}
-		// 图标过滤:尺寸与字节双阈值。
-		// 尺寸解不出来(SVG 等)时只看字节数。
-		if info.Bytes < cfg.minImageByte {
-			skippedSmall++
-			continue
-		}
-		if info.Width > 0 && info.Height > 0 &&
-			(info.Width < cfg.minImageSide || info.Height < cfg.minImageSide) {
+		// 图标过滤。
+		//
+		// 尺寸能解出来时只看尺寸,不看字节:线稿(化学结构式、流程图、示意图)
+		// 压得极小 —— 实测同一页里真正该看的 4 张结构图是 1.9–3.7 KB,而站点
+		// 页眉那个 LOGO 是 13.4 KB。字节阈值在这里是反着用的:该留的被滤掉,
+		// 该扔的放进来。像素尺寸才是"这是不是图标"的正确量具。
+		//
+		// 尺寸解不出来时才退回字节数:SVG 之类只有体积一个信号。
+		hasDims := info.Width > 0 && info.Height > 0
+		if hasDims {
+			if info.Width < cfg.minImageSide || info.Height < cfg.minImageSide {
+				skippedSmall++
+				continue
+			}
+		} else if info.Bytes < cfg.minImageByte {
 			skippedSmall++
 			continue
 		}
