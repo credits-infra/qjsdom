@@ -23,10 +23,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -51,21 +54,25 @@ type config struct {
 	minImageSide int
 	minImageByte int64
 	maxImageByte int64
-	debug        bool
+	// saveImagesDir 非空时把图片写到磁盘,并在结果里返回路径。
+	// 用途是让调用方能发送图片(MCP 的内容块只能让模型看见图,发不出去)。
+	saveImagesDir string
+	debug         bool
 }
 
 func loadConfig() config {
 	c := config{
-		cacheDir:     envStr("QJSDOM_CACHE_DIR", ""),
-		cacheTTL:     envDur("QJSDOM_CACHE_TTL", cache.DefaultTTL),
-		cacheMax:     envInt64("QJSDOM_CACHE_MAX", cache.DefaultMaxBytes),
-		timeout:      envDur("QJSDOM_TIMEOUT", 20*time.Second),
-		maxText:      int(envInt64("QJSDOM_MAX_TEXT", 60000)),
-		maxImages:    int(envInt64("QJSDOM_MAX_IMAGES", 5)),
-		minImageSide: int(envInt64("QJSDOM_MIN_IMAGE_SIDE", 100)),
-		minImageByte: envInt64("QJSDOM_MIN_IMAGE_BYTES", 5120),
-		maxImageByte: envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
-		debug:        os.Getenv("QJSDOM_DEBUG") == "1",
+		cacheDir:      envStr("QJSDOM_CACHE_DIR", ""),
+		cacheTTL:      envDur("QJSDOM_CACHE_TTL", cache.DefaultTTL),
+		cacheMax:      envInt64("QJSDOM_CACHE_MAX", cache.DefaultMaxBytes),
+		timeout:       envDur("QJSDOM_TIMEOUT", 20*time.Second),
+		maxText:       int(envInt64("QJSDOM_MAX_TEXT", 60000)),
+		maxImages:     int(envInt64("QJSDOM_MAX_IMAGES", 5)),
+		minImageSide:  int(envInt64("QJSDOM_MIN_IMAGE_SIDE", 100)),
+		minImageByte:  envInt64("QJSDOM_MIN_IMAGE_BYTES", 5120),
+		maxImageByte:  envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
+		saveImagesDir: envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
+		debug:         os.Getenv("QJSDOM_DEBUG") == "1",
 	}
 	return c
 }
@@ -92,6 +99,9 @@ type fetchOut struct {
 	LinksFound  int      `json:"links_found"`
 	FromCache   bool     `json:"from_cache,omitempty"`
 	Notice      []string `json:"notice,omitempty"`
+	// ImagePaths 是图片落盘后的绝对路径,只在设置了 QJSDOM_SAVE_IMAGES_DIR
+	// 时非空。内容块让模型看见图,路径让调用方把图发出去,这是两件事。
+	ImagePaths []string `json:"image_paths,omitempty"`
 }
 
 func main() {
@@ -198,10 +208,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 	out.ImagesFound = len(res.Images)
 
 	// 3. 组装内容块
-	content := []mcp.Content{
-		&mcp.TextContent{Text: composeText(res, out)},
-	}
-
+	var contentImgs []mcp.Content
 	wantImages := cfg.maxImages > 0
 	if args.Images != nil {
 		wantImages = *args.Images && cfg.maxImages > 0
@@ -211,12 +218,19 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 		out.ImagesSent = len(imgs)
 		out.Notice = append(out.Notice, notices...)
 		for _, im := range imgs {
-			content = append(content, &mcp.ImageContent{
+			contentImgs = append(contentImgs, &mcp.ImageContent{
 				MIMEType: im.mime,
 				Data:     im.data,
 			})
+			if im.path != "" {
+				out.ImagePaths = append(out.ImagePaths, im.path)
+			}
 		}
 	}
+
+	// 文本要在收完路径之后再拼,因为落盘的图片需要在这里告诉模型怎么发出去
+	content := []mcp.Content{&mcp.TextContent{Text: composeText(res, out)}}
+	content = append(content, contentImgs...)
 
 	return &mcp.CallToolResult{Content: content}, out, nil
 }
@@ -225,6 +239,41 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 type pickedImage struct {
 	mime string
 	data []byte // base64
+	// path 是图片落盘后的绝对路径。为空表示没有启用落盘 ——
+	// 内容块能让模型看见图,但要让调用方把图发出去还需要一个路径。
+	path string
+}
+
+// saveImageFile 把图片写到目录,文件名取 URL 的 sha1,避免路径穿越与重名。
+func saveImageFile(dir, rawURL, format string, data []byte) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	sum := sha1.Sum([]byte(rawURL))
+	name := hex.EncodeToString(sum[:])[:16] + extFromFormat(format)
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
+// extFromFormat 把图片格式转成文件扩展名。
+func extFromFormat(format string) string {
+	switch strings.ToLower(format) {
+	case "png":
+		return ".png"
+	case "gif":
+		return ".gif"
+	case "webp":
+		return ".webp"
+	case "svg":
+		return ".svg"
+	case "bmp":
+		return ".bmp"
+	default:
+		return ".jpg"
+	}
 }
 
 // collectImages 下载并筛选页面图片。
@@ -236,6 +285,7 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 	var picked []pickedImage
 	var notices []string
 	skippedSmall, skippedBig, failed := 0, 0, 0
+	saveFailed := 0
 
 	// 记下失败原因 —— 只报「N 张失败」等于没说,调用方无法判断是网络问题、
 	// 被站点拒绝、还是格式不支持。这里保留前几条,让排查有线索。
@@ -287,12 +337,28 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 			continue
 		}
 
+		// 需要路径时落盘。内容块只能让模型看见图;调用方要把图发给用户,
+		// 就得有一个文件路径。
+		imgPath := ""
+		if cfg.saveImagesDir != "" {
+			p, err := saveImageFile(cfg.saveImagesDir, abs, info.Format, data)
+			if err != nil {
+				saveFailed++
+			} else {
+				imgPath = p
+			}
+		}
+
 		picked = append(picked, pickedImage{
 			mime: mimeOf(info.Format),
 			data: []byte(base64.StdEncoding.EncodeToString(data)),
+			path: imgPath,
 		})
 	}
 
+	if saveFailed > 0 {
+		notices = append(notices, fmt.Sprintf("%d 张图片写入磁盘失败", saveFailed))
+	}
 	if deduped > 0 {
 		notices = append(notices, fmt.Sprintf("跳过了 %d 个重复的图片地址", deduped))
 	}
@@ -353,6 +419,11 @@ func composeText(res *renderer.Result, out fetchOut) string {
 			fmt.Fprintf(&b, "- [%s](%s)\n", l.Title, l.URL)
 		}
 	}
+	// 图片路径作为数据返回,但这里【不】教调用方怎么写 MEDIA:。
+	// 那是 Hermes 自己的平台约定,不是 MCP 的一部分 —— 非 Hermes 客户端
+	// 看到它只会困惑。怎么用这个路径由客户端自己决定。
+	//
+	// (内容块已经让模型看见了图;路径是给需要落盘文件的调用方用的。)
 	return b.String()
 }
 
