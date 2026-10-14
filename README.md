@@ -107,10 +107,28 @@ Node built-in dependencies, so it bundles small enough to embed.
 The [Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk) handles the MCP
 side.
 
-The documentation follows the
-[Google developer documentation style guide](https://developers.google.com/style).
+### How this was built
 
-The prose got a pass from [humanizer](https://github.com/blader/humanizer) to
+The code and documentation here were written by an AI agent. Saying so outright
+seems more useful than leaving it implied.
+
+| | |
+| --- | --- |
+| Agent | [Hermes Agent](https://hermes-agent.nousresearch.com) v0.21.6 |
+| Model | deepseek-v4.1-flash via [OpenCode Zen](https://opencode.ai/zen) |
+| Human | chose the approach, set the constraints, reviewed every change |
+
+The human half of that list is not a formality. The agent wrote that page images
+were not worth returning because a model cannot see them. It can, and the user
+said so. The agent also built an automatic content-type detector for extraction
+when the caller already knows what it wants; the user pointed out that the
+information was never in the page to begin with. Both corrections are the reason
+the current design looks the way it does, and both are recorded in
+[decisions](docs/decisions.md).
+
+The documentation follows the
+[Google developer documentation style guide](https://developers.google.com/style),
+and the prose got a pass from [humanizer](https://github.com/blader/humanizer) to
 strip the patterns that make writing read as machine-made.
 
 ## License
