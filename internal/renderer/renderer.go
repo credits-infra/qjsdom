@@ -57,6 +57,9 @@ type Result struct {
 	Links      []string `json:"links"`
 	Images     []string `json:"images"`
 	HasBody    bool     `json:"hasBody"`
+	// Degraded 为 true 表示 DOM 解析失败、退回了粗暴的文本提取。
+	// 这种情况仍然会返回结果(而不是报错),调用方应按需降级处理。
+	Degraded bool `json:"degraded"`
 
 	// 以下为 Go 侧补充的诊断信息
 	Elapsed time.Duration `json:"-"`
