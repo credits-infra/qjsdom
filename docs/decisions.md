@@ -277,6 +277,46 @@ The general rule, which is why this is worth writing down: a tool that reaches
 across a protocol boundary should speak that protocol and leave platform
 conventions to the platform.
 
+## Label the images, do not number them
+
+An image content block carries bytes and a MIME type. It carries no name. The path
+next to it is the SHA-1 of its URL, which identifies nothing a reader can use. So a
+caller holding three images and three paths can only pair them by position — and
+every step between the server and the model is free to change the positions.
+
+That is how a site logo went out as a figure. The model had three paths, the client
+had rejected one image (an SVG, which a raster-only media cache will not accept),
+and it sent the first path it could see.
+
+The first cause found was a different bug: the server pre-encoded the image bytes to
+base64 and the SDK encoded them again, so no client could decode them and the model
+had seen no images at all. Fixing it is the reason to distrust the obvious
+conclusion, because once it landed the model could see the images and recovered the
+right one by itself.
+
+Measured on `gemini-3.1-flash-lite`, twelve runs per arm, one Wikipedia article, both
+arms fed byte-identical text and images:
+
+| Scenario | Paths returned | Images attached | Without the list | With the list |
+| --- | --- | --- | --- | --- |
+| Loose question | 3 | 2 | 12/12 | 12/12 |
+| Name the figure | 8 | 6 | 6/12 | 12/12 |
+
+The small case is not evidence for the list. With one image missing out of three, the
+model counts correctly and finds the figure anyway, so the list is redundant there.
+The large case is the evidence: six of twelve runs sent the site logo, and the list
+removed every failure. The URL says `icons/wikipedia.png`; nothing has to be counted.
+
+The harness lied first, and in the flattering direction. Its opening run gave the arm
+under test a perfect score, because the table used to interpret the answers came from
+the same list that the code had stripped out of that arm's text. The metric was
+measuring its own blind spot. Derive the expectation from the unmodified result, never
+from what you handed the model.
+
+The rule: state the mapping the server holds, rather than expecting every client to
+preserve an order the protocol never promised. It is not a workaround for one client,
+because no client can recover a URL from a SHA-1 filename.
+
 ## Paths not taken
 
 **markitdown** converts many formats to Markdown and looks like a natural fit. It

@@ -89,6 +89,24 @@ your client: post them, upload them, or ignore them.
 The server does not tell you how to send a file. That is a platform decision, and
 the right answer differs per client.
 
+The response text ends with a list of the returned images, in the same order as the
+image content blocks:
+
+```
+## 本页图片
+
+1. https://example.com/logo.png [PNG 100×100]
+   文件:/tmp/images/077362022503ff00.png
+2. https://example.com/figure.png [PNG 250×581]
+   未落盘
+```
+
+An image block carries no name, so this list is the only place that says where an
+image came from. Without it a client can pair images to paths only by position, which
+stops working as soon as one image is dropped or skipped. The file line reads
+`未落盘` when the image was not written to disk, such as when
+`QJSDOM_SAVE_IMAGES_DIR` is unset.
+
 ## What it will not do
 
 This is not a browser. There is no layout engine, so a page that loads content
