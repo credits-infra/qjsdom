@@ -243,9 +243,21 @@ probe, and the code was correctly rejecting it by content type.
 ## Guard against SSRF
 
 This component ends up exposed to a chat group where anyone can trigger a fetch.
-Without a guard it becomes a scanner for the internal network. The fetcher
-rejects loopback, private, link-local, and cloud metadata addresses, including on
-redirects.
+Without a guard it becomes a scanner for the internal network.
+
+Two rules do the work, and they are not equally strong. The first is a protocol
+allowlist: only `http` and `https` are fetchable, and everything else stays shut
+until an operator names it in `QJSDOM_ALLOW_SCHEMES`. That list can be read at a
+glance, which is the point of it. An address list cannot be: Go's `IsPrivate()`
+covers RFC 1918 and RFC 4193 but not `100.64.0.0/10` (RFC 6598), so
+`100.100.100.200`, the Alibaba Cloud metadata address, passes the address check on
+a host that uses that range.
+
+The second rule is the address check. It rejects loopback, private, and link-local
+addresses, plus the AWS and GCP metadata address `169.254.169.254`, on the entry
+URL and again on every redirect. Treat it as a backstop rather than the boundary:
+it is a list of known-bad ranges, and lists of known-bad things belong behind a
+rule that is closed by default.
 
 ## Accept flags after the URL
 

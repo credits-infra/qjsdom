@@ -25,18 +25,20 @@ import (
 
 func main() {
 	var (
-		modeFlag   = flag.String("mode", "all", "提取策略: all(整页,默认) / article(正文) / links(链接列表)")
-		selector   = flag.String("selector", "", "正文容器 CSS 选择器(对 all/article 生效)")
-		maxLen     = flag.Int("max", 0, "正文截断长度,0=不截断")
-		asJSON     = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
-		filePath   = flag.String("file", "", "渲染本地 HTML 文件,不联网")
-		noScripts  = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
-		noImages   = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
-		dlImages   = flag.Bool("download-images", false, "下载页面图片到 -images-dir(交给模型看)")
-		imgDir     = flag.String("images-dir", "", "图片保存目录(配合 -download-images)")
-		maxImages  = flag.Int("max-images", 20, "最多下载几张图片")
-		stats      = flag.Bool("stats", false, "把诊断信息打印到 stderr")
-		allowPriv  = flag.Bool("allow-private", false, "允许访问内网地址(仅本地测试)")
+		modeFlag     = flag.String("mode", "all", "提取策略: all(整页,默认) / article(正文) / links(链接列表)")
+		selector     = flag.String("selector", "", "正文容器 CSS 选择器(对 all/article 生效)")
+		maxLen       = flag.Int("max", 0, "正文截断长度,0=不截断")
+		asJSON       = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
+		filePath     = flag.String("file", "", "渲染本地 HTML 文件,不联网")
+		noScripts    = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
+		noImages     = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
+		dlImages     = flag.Bool("download-images", false, "下载页面图片到 -images-dir(交给模型看)")
+		imgDir       = flag.String("images-dir", "", "图片保存目录(配合 -download-images)")
+		maxImages    = flag.Int("max-images", 20, "最多下载几张图片")
+		stats        = flag.Bool("stats", false, "把诊断信息打印到 stderr")
+		allowPriv    = flag.Bool("allow-private", false, "允许访问内网地址(仅本地测试)")
+		allowSchemes = flag.String("allow-schemes", "",
+			"额外放行的 URL 协议,逗号分隔(默认只允许 http/https;如 file 读本机文件)")
 		timeout    = flag.Duration("timeout", 20*time.Second, "抓取超时")
 		useCache   = flag.Bool("cache", false, "启用页面源码缓存(同一 URL 换 mode 重试时不必重新抓取)")
 		cacheDir   = flag.String("cache-dir", "", "缓存目录(默认:用户缓存目录/qjsdom)")
@@ -66,6 +68,7 @@ func main() {
 	fetchOpts := fetcher.DefaultOptions()
 	fetchOpts.Timeout = *timeout
 	fetchOpts.AllowPrivate = *allowPriv
+	fetchOpts.AllowSchemes = fetcher.SplitSchemes(*allowSchemes)
 
 	// 缓存:两道防线(TTL + 容量上限)在 cache.Purge 里,写入前自动执行。
 	var c *cache.Cache
@@ -227,16 +230,17 @@ func shorten(s string, n int) string {
 // 它的值还是位置参数。
 func reorderArgs(args []string) []string {
 	valueFlags := map[string]bool{
-		"-mode":       true,
-		"-selector":   true,
-		"-max":        true,
-		"-file":       true,
-		"-timeout":    true,
-		"-images-dir": true,
-		"-max-images": true,
-		"-cache-dir":  true,
-		"-cache-ttl":  true,
-		"-cache-max":  true,
+		"-mode":          true,
+		"-selector":      true,
+		"-max":           true,
+		"-file":          true,
+		"-timeout":       true,
+		"-images-dir":    true,
+		"-max-images":    true,
+		"-allow-schemes": true,
+		"-cache-dir":     true,
+		"-cache-ttl":     true,
+		"-cache-max":     true,
 	}
 
 	var flags, positional []string

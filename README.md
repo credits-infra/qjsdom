@@ -75,6 +75,24 @@ Environment variables:
 | `QJSDOM_MAX_IMAGE_BYTES` | 2 MB | Per-image size cap |
 | `QJSDOM_SAVE_IMAGES_DIR` | off | Write images here and report their paths. See below |
 | `QJSDOM_DEBUG` | off | Set to `1` for diagnostics on stderr |
+| `QJSDOM_ALLOW_SCHEMES` | empty | Extra URL schemes to allow. Empty means http and https only |
+
+### URL schemes
+
+Only `http` and `https` are fetchable, and that list is a boundary rather than a
+filter: it cannot develop holes the way an address list does. Set
+`QJSDOM_ALLOW_SCHEMES` to name extra schemes (`file` reads a local file), and the
+server prints a warning at startup when you do. Leaving it empty keeps everything
+else closed.
+
+The `file` scheme is the one built-in addition. It is off by default because
+enabling it hands the caller a way to read files on the host. A deployment where
+anyone in a chat group can trigger a fetch should leave it off.
+
+```bash
+# Render a saved page, images and all, with no network access
+QJSDOM_ALLOW_SCHEMES=file qjsdom-mcp
+```
 
 ### Sending the images to a user
 

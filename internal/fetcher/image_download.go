@@ -98,9 +98,16 @@ func fetchImageData(rawURL string, opt Options, maxBytes int64) ([]byte, ImageFi
 		out.Error = "URL 解析失败: " + err.Error()
 		return nil, out
 	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		out.Error = fmt.Sprintf("不支持的协议: %q", u.Scheme)
+	if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "file" {
+		out.Error = fmt.Sprintf("协议 %q 未放行(默认只允许 http/https)", u.Scheme)
 		return nil, out
+	}
+	if u.Scheme == "file" {
+		if !schemeAllowed(u.Scheme, opt.AllowSchemes) {
+			out.Error = fmt.Sprintf("协议 %q 未放行(默认只允许 http/https)", u.Scheme)
+			return nil, out
+		}
+		return readLocalImage(u, maxBytes)
 	}
 	if u.Host == "" {
 		out.Error = "URL 缺少主机名"
@@ -189,6 +196,48 @@ func fetchImageData(rawURL string, opt Options, maxBytes int64) ([]byte, ImageFi
 		out.Height = cfg.Height
 	}
 
+	return data, out
+}
+
+// readLocalImage 读本机图片文件(file:// 协议,仅在显式放行 file 时可达)。
+//
+// 与 HTTP 路径共用同一套嗅探与尺寸解析,保证 file:// 与 http:// 的
+// ImageFile 字段语义一致。
+func readLocalImage(u *url.URL, maxBytes int64) ([]byte, ImageFile) {
+	out := ImageFile{URL: u.String()}
+	path := u.Path
+	if path == "" {
+		path = u.Host + u.Path
+	}
+	if unescaped, err := url.PathUnescape(path); err == nil {
+		path = unescaped
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		out.Error = "读取本机文件失败: " + err.Error()
+		return nil, out
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		out.Error = "读取失败: " + err.Error()
+		return nil, out
+	}
+	if int64(len(data)) > maxBytes {
+		out.Error = fmt.Sprintf("超过单张上限(%d MB)", maxBytes>>20)
+		return nil, out
+	}
+	if len(data) == 0 {
+		out.Error = "空文件"
+		return nil, out
+	}
+	out.Format = strings.TrimPrefix(sniffImageExt(data, ""), ".")
+	out.Bytes = int64(len(data))
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		out.Width = cfg.Width
+		out.Height = cfg.Height
+	}
 	return data, out
 }
 

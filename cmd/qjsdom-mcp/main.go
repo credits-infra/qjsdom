@@ -57,6 +57,8 @@ type config struct {
 	// 用途是让调用方能发送图片(MCP 的内容块只能让模型看见图,发不出去)。
 	saveImagesDir string
 	debug         bool
+	// allowSchemes 是额外放行的 URL 协议(默认只有 http/https)。
+	allowSchemes []string
 }
 
 func loadConfig() config {
@@ -72,6 +74,7 @@ func loadConfig() config {
 		maxImageByte:  envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
 		saveImagesDir: envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
 		debug:         os.Getenv("QJSDOM_DEBUG") == "1",
+		allowSchemes:  fetcher.SplitSchemes(envStr("QJSDOM_ALLOW_SCHEMES", "")),
 	}
 	return c
 }
@@ -141,6 +144,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[qjsdom-mcp] 启动 v%s cache=%v maxImages=%d\n",
 			version, c != nil, cfg.maxImages)
 	}
+	// 放行了 http/https 之外的协议就要说一声:这是一条放宽,而且 file
+	// 等于给调用方读了本机文件的入口。
+	if len(cfg.allowSchemes) > 0 {
+		fmt.Fprintf(os.Stderr,
+			"[qjsdom-mcp] 警告:QJSDOM_ALLOW_SCHEMES 额外放行了协议 %v(默认为空,只有 http/https)\n",
+			cfg.allowSchemes)
+	}
 	if err := srv.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Printf("qjsdom-mcp: %v", err)
 		os.Exit(1)
@@ -164,6 +174,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 
 	fo := fetcher.DefaultOptions()
 	fo.Timeout = cfg.timeout
+	fo.AllowSchemes = cfg.allowSchemes
 
 	// 1. 取 HTML(优先缓存)
 	var html string
