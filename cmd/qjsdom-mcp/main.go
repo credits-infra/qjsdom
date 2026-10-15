@@ -357,7 +357,10 @@ func collectImages(cfg config, fo fetcher.Options, urls []string, pageURL string
 		// 尺寸解不出来时才退回字节数:SVG 之类只有体积一个信号。
 		hasDims := info.Width > 0 && info.Height > 0
 		if hasDims {
-			if info.Width < cfg.minImageSide || info.Height < cfg.minImageSide {
+			// 边界含等号:站点页眉那个 LOGO 实测正好是 100×100,用严格 < 会
+			// 把它放进来(它在 decisions 里记的事故中排到了图片清单第一位)。
+			// 宁可多丢一张贴着阈值的图 —— 清单里混进图标比少一张小图更难查。
+			if info.Width <= cfg.minImageSide || info.Height <= cfg.minImageSide {
 				skippedSmall++
 				continue
 			}
