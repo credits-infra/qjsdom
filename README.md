@@ -125,6 +125,12 @@ stops working as soon as one image is dropped or skipped. The file line reads
 `未落盘` when the image was not written to disk, such as when
 `QJSDOM_SAVE_IMAGES_DIR` is unset.
 
+Images come from the content container, not from the whole document. `article`
+mode and `selector` both narrow the collection, so a page header logo or a sidebar
+badge stays out of the list. `all` mode without a selector keeps the whole page and
+with it every image on it. Pass `selector` when a figure is missing from a page
+that has one.
+
 ## What it will not do
 
 This is not a browser. There is no layout engine, so a page that loads content

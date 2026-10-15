@@ -241,6 +241,11 @@
     // 实测:维基条目的 <img> 里 src 是 1x1 的 base64 占位 GIF,真实地址在
     // data-src 等属性里 —— 只看 src 会一张都收集不到。
     // 另外 <picture><source srcset> 也是常见来源。
+    //
+    // 收集范围跟随正文容器:文档级的 querySelectorAll("img") 会把页眉 LOGO、
+    // 侧栏徽标一并算进来,而它们与"这页在讲什么"无关。调用方给了 selector
+    // (或 article 模式选中了容器)时按容器收;没容器时(links 模式)才退回全文档。
+    const 图片范围 = (node && typeof node.querySelectorAll === "function") ? node : document;
     const images = [];
     const pushImg = (raw) => {
       const u = decodeEntities(raw);
@@ -253,7 +258,7 @@
       return first || "";
     };
     try {
-      for (const im of document.querySelectorAll("img")) {
+      for (const im of 图片范围.querySelectorAll("img")) {
         let u = im.getAttribute("src");
         // src 缺失,或是内联占位图(懒加载常用 1x1 GIF) → 去懒加载属性里找
         const isPlaceholder = !u || (u.startsWith("data:") && u.length < 300);
@@ -273,7 +278,7 @@
       }
       // <picture> 里的 <source srcset>
       if (images.length < 100) {
-        for (const s of document.querySelectorAll("source[srcset], source[data-srcset]")) {
+        for (const s of 图片范围.querySelectorAll("source[srcset], source[data-srcset]")) {
           pushImg(firstOfSrcset(s.getAttribute("srcset") || s.getAttribute("data-srcset")));
           if (images.length >= 100) break;
         }
