@@ -68,7 +68,7 @@ Environment variables:
 | `QJSDOM_CACHE_TTL` | `10m` | Cache lifetime. `0` turns caching off |
 | `QJSDOM_CACHE_MAX` | 64 MB | Cache size cap |
 | `QJSDOM_TIMEOUT` | `20s` | Fetch timeout |
-| `QJSDOM_MAX_TEXT` | `60000` | Truncate the text at this many characters |
+| `QJSDOM_MAX_TEXT` | `60000` | Truncate the text at this many characters. Counted in characters, not bytes |
 | `QJSDOM_MAX_IMAGES` | `5` | Images per response. `0` returns none |
 | `QJSDOM_MIN_IMAGE_SIDE` | `100` | Shorter side of an image that has known dimensions; smaller images count as icons and get dropped |
 | `QJSDOM_MIN_IMAGE_BYTES` | `5120` | Applied only when the dimensions cannot be read, such as for SVG |

@@ -82,7 +82,7 @@ type fetchArgs struct {
 	URL      string `json:"url" jsonschema:"required. Absolute http(s) URL of the page to read."`
 	Mode     string `json:"mode,omitempty" jsonschema:"Extraction strategy. all (default) returns the whole page text plus its links, losing nothing. article picks the main content container (articles, encyclopedias, docs). links returns just the link list, which is what search results and index pages need."`
 	Selector string `json:"selector,omitempty" jsonschema:"CSS selector naming the content container directly. Use it when article mode picks the wrong container. For Wikipedia, #mw-content-text."`
-	MaxLen   int    `json:"max_len,omitempty" jsonschema:"Truncate the returned text at this many characters. 0 uses the server default."`
+	MaxLen   int    `json:"max_len,omitempty" jsonschema:"Truncate the returned text at this many characters. Counted in characters, so multi-byte text is never cut mid-character. 0 uses the server default."`
 	Images   *bool  `json:"images,omitempty" jsonschema:"Return the page's images as image content blocks so the model can see them. Defaults to true. Small icons are filtered out automatically."`
 }
 

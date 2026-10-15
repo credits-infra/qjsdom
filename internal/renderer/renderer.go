@@ -187,8 +187,8 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 		// RunScripts=false 时,page_runner 依然会跑;这里只用于标注
 		out.ScriptErrs = append(out.ScriptErrs, "note: RunScripts=false 尚未实现,脚本仍然执行了")
 	}
-	if opt.MaxTextLen > 0 && len(out.Text) > opt.MaxTextLen {
-		out.Text = out.Text[:opt.MaxTextLen] + "…(已截断)"
+	if opt.MaxTextLen > 0 {
+		out.Text = truncateRunes(out.Text, opt.MaxTextLen)
 	}
 	out.Elapsed = time.Since(start)
 
@@ -308,8 +308,39 @@ func registerImageProbe(ctx *qjs.Context, pageURL string, opt Options) {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
+	if cut, ok := cutRunes(s, n); ok {
+		return cut + "…"
 	}
-	return s[:n] + "…"
+	return s
+}
+
+// cutRunes 取字符串的前 n 个【字符】(不是字节),并报告是否真的截掉了东西。
+//
+// 为什么不能用 len(s) 与 s[:n]:Go 的字符串索引是字节下标,按字节切断会把
+// 一个多字节字符切成两半 —— 结果既不是合法 UTF-8(中文正文实测:截出来是
+// 半个汉字),序列化成 JSON 时坏字节被替换成 U+FFFD,等于文字被静默损坏。
+// 只有落在字符边界上,才配得上 MAX_TEXT 文档里写的 "characters"。
+func cutRunes(s string, n int) (string, bool) {
+	if n <= 0 {
+		return s, false
+	}
+	if len(s) <= n {
+		return s, false // 字节数都没超,字符数必然没超
+	}
+	count := 0
+	for i := range s { // range 按字符迭代,i 是该字符的起始字节下标
+		if count == n {
+			return s[:i], true
+		}
+		count++
+	}
+	return s, false // 字符数其实不超过 n(只是字节数超了)
+}
+
+// truncateRunes 按字符截断,并在真的截断时追加提示。
+func truncateRunes(s string, n int) string {
+	if cut, ok := cutRunes(s, n); ok {
+		return cut + "…(已截断)"
+	}
+	return s
 }
