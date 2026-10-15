@@ -244,9 +244,15 @@ func reorderArgs(args []string) []string {
 	}
 
 	var flags, positional []string
+	有分隔符 := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
+			// 分隔符本身必须留在结果里:flag.Parse 靠它知道"后面全不是 flag"。
+			// 丢掉它的话,`--` 之后那个像 flag 的位置参数会被 flag.Parse 当 flag
+			// 处理(实测:`qjsdom -json -- -max` 等价于 `-json -max`,而后者报
+			// `flag needs an argument: -max`)。
+			有分隔符 = true
 			positional = append(positional, args[i+1:]...)
 			break
 		}
@@ -260,6 +266,9 @@ func reorderArgs(args []string) []string {
 			continue
 		}
 		positional = append(positional, a)
+	}
+	if 有分隔符 {
+		return append(append(flags, "--"), positional...)
 	}
 	return append(flags, positional...)
 }

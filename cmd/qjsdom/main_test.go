@@ -36,6 +36,16 @@ func TestReorderArgsMovesFlagsAfterPositionals(t *testing.T) {
 			[]string{"https://example.com", "-max=100"},
 			[]string{"-max=100", "https://example.com"},
 		},
+		{
+			"-- 分隔符必须保留(它之后的位置参数不许被当 flag 吃掉)",
+			[]string{"-json", "--", "-max"},
+			[]string{"-json", "--", "-max"},
+		},
+		{
+			"-- 之前的位置参数照旧被挪到后面",
+			[]string{"https://example.com", "--", "-max"},
+			[]string{"--", "https://example.com", "-max"},
+		},
 	}
 	for _, c := range cases {
 		got := reorderArgs(c.输入)
