@@ -33,10 +33,10 @@ func TestMaxTextLenCountsRunes(t *testing.T) {
 // TestCutRunesEdgeCases 覆盖零值与边界:不截断时不该加提示,超长时不该多切。
 func TestCutRunesEdgeCases(t *testing.T) {
 	cases := []struct {
-		名   string
+		名  string
 		输入 string
 		上限 int
-		想   string
+		想  string
 		截了 bool
 	}{
 		{"上限为 0 表示不截断", "中国的生物化学", 0, "中国的生物化学", false},
