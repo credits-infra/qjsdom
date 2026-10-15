@@ -59,22 +59,25 @@ type config struct {
 	debug         bool
 	// allowSchemes 是额外放行的 URL 协议(默认只有 http/https)。
 	allowSchemes []string
+	// maxConcurrency 是同时处理的页面请求上限(排队容量取其两倍)。
+	maxConcurrency int
 }
 
 func loadConfig() config {
 	c := config{
-		cacheDir:      envStr("QJSDOM_CACHE_DIR", ""),
-		cacheTTL:      envDur("QJSDOM_CACHE_TTL", cache.DefaultTTL),
-		cacheMax:      envInt64("QJSDOM_CACHE_MAX", cache.DefaultMaxBytes),
-		timeout:       envDur("QJSDOM_TIMEOUT", 20*time.Second),
-		maxText:       int(envInt64("QJSDOM_MAX_TEXT", 60000)),
-		maxImages:     int(envInt64("QJSDOM_MAX_IMAGES", 5)),
-		minImageSide:  int(envInt64("QJSDOM_MIN_IMAGE_SIDE", 100)),
-		minImageByte:  envInt64("QJSDOM_MIN_IMAGE_BYTES", 5120),
-		maxImageByte:  envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
-		saveImagesDir: envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
-		debug:         os.Getenv("QJSDOM_DEBUG") == "1",
-		allowSchemes:  fetcher.SplitSchemes(envStr("QJSDOM_ALLOW_SCHEMES", "")),
+		cacheDir:       envStr("QJSDOM_CACHE_DIR", ""),
+		cacheTTL:       envDur("QJSDOM_CACHE_TTL", cache.DefaultTTL),
+		cacheMax:       envInt64("QJSDOM_CACHE_MAX", cache.DefaultMaxBytes),
+		timeout:        envDur("QJSDOM_TIMEOUT", 20*time.Second),
+		maxText:        int(envInt64("QJSDOM_MAX_TEXT", 60000)),
+		maxImages:      int(envInt64("QJSDOM_MAX_IMAGES", 5)),
+		minImageSide:   int(envInt64("QJSDOM_MIN_IMAGE_SIDE", 100)),
+		minImageByte:   envInt64("QJSDOM_MIN_IMAGE_BYTES", 5120),
+		maxImageByte:   envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
+		saveImagesDir:  envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
+		debug:          os.Getenv("QJSDOM_DEBUG") == "1",
+		allowSchemes:   fetcher.SplitSchemes(envStr("QJSDOM_ALLOW_SCHEMES", "")),
+		maxConcurrency: int(envInt64("QJSDOM_MAX_CONCURRENCY", 2)),
 	}
 	return c
 }
@@ -121,6 +124,10 @@ func main() {
 		Version: version,
 	}, nil)
 
+	// 排队容量取并发上限的两倍:留一点缓冲让"稍等就能轮到"的请求排上,
+	// 再多就明确拒绝。
+	闸 := 新并发闸(cfg.maxConcurrency, cfg.maxConcurrency*2)
+
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "fetch_page",
 		Description: "Fetch a web page and return its content as text, executing the page's " +
@@ -137,12 +144,20 @@ func main() {
 			"result — text_len 0, no title — means this URL yielded nothing, not that the " +
 			"thing you looked for does not exist.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args fetchArgs) (*mcp.CallToolResult, fetchOut, error) {
+		// 并发闸放在最外层:一次请求的峰值内存几乎全部来自渲染时新建的
+		// qjs 运行时,所以限制同时进行的请求数就等于限制内存占用。
+		// 排队满时给一条明确的"忙",而不是继续堆请求。
+		释放, err := 闸.进入()
+		if err != nil {
+			return errResult(err.Error()), fetchOut{}, nil
+		}
+		defer 释放()
 		return handleFetch(cfg, c, args)
 	})
 
 	if cfg.debug {
-		fmt.Fprintf(os.Stderr, "[qjsdom-mcp] 启动 v%s cache=%v maxImages=%d\n",
-			version, c != nil, cfg.maxImages)
+		fmt.Fprintf(os.Stderr, "[qjsdom-mcp] 启动 v%s cache=%v maxImages=%d 并发上限=%d\n",
+			version, c != nil, cfg.maxImages, cfg.maxConcurrency)
 	}
 	// 放行了 http/https 之外的协议就要说一声:这是一条放宽,而且 file
 	// 等于给调用方读了本机文件的入口。

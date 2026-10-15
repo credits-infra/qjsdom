@@ -76,6 +76,7 @@ Environment variables:
 | `QJSDOM_SAVE_IMAGES_DIR` | off | Write images here and report their paths. See below |
 | `QJSDOM_DEBUG` | off | Set to `1` for diagnostics on stderr |
 | `QJSDOM_ALLOW_SCHEMES` | empty | Extra URL schemes to allow. Empty means http and https only |
+| `QJSDOM_MAX_CONCURRENCY` | `2` | Page requests handled at once. Further requests queue, up to twice this many, then get a busy error |
 
 ### URL schemes
 
