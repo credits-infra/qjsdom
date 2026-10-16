@@ -454,22 +454,31 @@ come from.
 
 ## Bound the time a page's network may take
 
-A request count is not a time bound. Fifteen page-script requests each waiting out
-its own ten-second timeout is two and a half minutes of wall clock for one page, and
-the count cap cannot tell fifteen fast requests from fifteen that hang. Measured
-worst case before this change: about 150 seconds, serialized, with nothing the
-caller could do about it.
+A request count is not a time bound. Fifteen page-script requests each waiting out its
+own ten-second timeout is two and a half minutes of wall clock for one page, and the
+count cap cannot tell fifteen fast requests from fifteen that hang. A first pass
+bounded only that path, which measured about 150 seconds serialized — and the review
+that checked it found two larger bounds sitting outside it: the external-script pass at
+10 × 8 s and the image probe at 20 × 8 s, the latter 160 seconds on its own.
 
-So the page's own scripts get a total wall-clock budget for the network, measured
-from the start of the render. Ten seconds by default; `QJSDOM_JS_FETCH_BUDGET` (or
-`-js-fetch-budget`) changes it. A request that arrives after the budget is spent
-fails immediately with a message naming the budget, and that message lands in
-`scriptErrs` — the page still renders, and the caller can see the network was cut
-short instead of wondering why content is missing.
+So all three outbound paths now share one wall-clock budget for the network: external
+scripts, the page's own `fetch` and `XMLHttpRequest`, and `Image` probes. Ten seconds
+by default; `QJSDOM_JS_FETCH_BUDGET` (or `-js-fetch-budget`) changes it. A request that
+arrives after the budget is spent fails immediately with a message naming the budget,
+and the render adds a line to `scriptErrs` recording that the network was cut short.
 
-Time-based rather than another count, deliberately: slow pages are the failure
-mode, while a page making fifteen fast requests is fine and should get all fifteen.
+Two details are deliberate, and both came out of measurements rather than taste:
 
+- **The clock starts at the page's first request, not at the start of the render.**
+  Building the DOM and the bundle takes 200–300 ms here, and a clock started earlier
+  made budgets of 100–200 ms refuse the *first* request — quietly turning the feature
+  off instead of limiting it.
+- **The three paths share one window rather than getting one each.** Three separate
+  budgets would make the worst case three times the number, and the sentence "a page
+  gets N seconds of network" would stop being true.
+
+Time-based rather than another count, deliberately: slow pages are the failure mode,
+while a page making fifteen fast requests is fine and should get all fifteen.
 ## Paths not taken
 
 **markitdown** converts many formats to Markdown and looks like a natural fit. It

@@ -89,3 +89,37 @@ document.querySelector("#c p").textContent = "探测已发起";
 		t.Errorf("8 张慢图应当被预算拦下至少几张,实际全部探完(%d 次)", 取回)
 	}
 }
+
+// Test预算用尽写进scriptErrs —— 第四轮交叉评审 B3(中)。
+//
+// 原先预算用尽只在"页面脚本自己 catch 并写进 DOM"时才看得见:不 catch 的 fetch
+// 失败,调用方在 scriptErrs 里【什么都看不到】。而 README 与 decisions.md 承诺过
+// 那里能看到原因 —— 承诺与行为不符。现在由 Go 侧统一记一条。
+func Test预算用尽写进scriptErrs(t *testing.T) {
+	var 命中 int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&命中, 1)
+		time.Sleep(60 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":1}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	// 页面脚本【不 catch】—— 这正是原先看不到原因的那种写法
+	html := `<!DOCTYPE html><html lang="zh"><head><title>静默</title></head><body>
+<article id="c"><p>原文本</p>
+<script>fetch('/a'); fetch('/b'); fetch('/c'); fetch('/d');</script>
+</article></body></html>`
+
+	opt := 测试选项带基准()
+	opt.JSFetchBudget = 150 * time.Millisecond
+	res, err := Render(html, srv.URL+"/p", opt)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	记录 := strings.Join(res.ScriptErrs, " | ")
+	t.Logf("服务端收到 %d 次,scriptErrs=%v", atomic.LoadInt32(&命中), res.ScriptErrs)
+	if !strings.Contains(记录, "联网时间预算") {
+		t.Errorf("预算用尽必须在 scriptErrs 里留痕(与页面脚本是否 catch 无关),实际=%v", res.ScriptErrs)
+	}
+}

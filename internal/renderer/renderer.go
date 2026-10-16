@@ -313,6 +313,13 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	if 注入提示 != "" {
 		out.ScriptErrs = append(out.ScriptErrs, 注入提示)
 	}
+	// 预算用尽要在结果里留痕,而且必须由 Go 侧记 —— 页面脚本自己 catch 不 catch
+	// 是它的事:不 catch 时那条 promise 的 TypeError 只有页面自己看得到,调用方
+	// 拿到的就是"内容莫名其妙缺了一块"(第四轮交叉评审 B3 实测)。
+	if 预算.耗尽 {
+		out.ScriptErrs = append(out.ScriptErrs, fmt.Sprintf(
+			"note: 本页联网时间预算(%s)已用尽,其后的网络请求被拒 —— 内容可能因此不完整", 预算.上限))
+	}
 	if !opt.RunScripts {
 		// RunScripts=false 时,page_runner 依然会跑;这里只用于标注
 		out.ScriptErrs = append(out.ScriptErrs, "note: RunScripts=false 尚未实现,脚本仍然执行了")

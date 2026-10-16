@@ -67,7 +67,8 @@ type config struct {
 	jsFetch bool
 	// scriptSrc 是否加载 <script src> 外部脚本。
 	scriptSrc bool
-	// jsFetchBudget 页面脚本联网的总时间预算(零值 = 渲染器默认 10s)。
+	// jsFetchBudget 整页联网的时间预算(零值 = 渲染器默认 10s):
+	// 外链脚本、页面脚本请求、图片探测三条通路共用同一个窗口。
 	jsFetchBudget time.Duration
 }
 

@@ -36,7 +36,7 @@ func main() {
 		noJSFetch   = flag.Bool("no-js-fetch", false, "不让页面脚本联网(关掉 fetch / XMLHttpRequest)")
 		noScriptSrc = flag.Bool("no-script-src", false, "不加载 <script src> 外部脚本")
 		jsBudget    = flag.Duration("js-fetch-budget", 0,
-			"页面脚本联网的总时间预算(默认 10s;0 = 用默认值)")
+			"整页联网的时间预算:外链脚本 / 页面脚本请求 / 图片探测共用(默认 10s;0 = 用默认值)")
 		dlImages     = flag.Bool("download-images", false, "下载页面图片到 -images-dir(交给模型看)")
 		imgDir       = flag.String("images-dir", "", "图片保存目录(配合 -download-images)")
 		maxImages    = flag.Int("max-images", 20, "最多下载几张图片")
