@@ -105,3 +105,29 @@ func TestConvertEmptyAndPlainText(t *testing.T) {
 		t.Errorf("尾部不该留空行: %q", got)
 	}
 }
+
+// TestConvertKeepsRelativeLinksOnNonHTTPBase 钉住一个实测出来的坏地址:
+// 基址是 file:///tmp/x.html 时,库会把 /wiki/x 拼成 http://file:/wiki/x ——
+// 谁也打不开。非 http(s) 基址一律不参与补全,相对链接原样保留。
+func TestConvertKeepsRelativeLinksOnNonHTTPBase(t *testing.T) {
+	html := `<p><a href="/wiki/x">相对</a></p>`
+	got, err := Convert(html, "file:///tmp/x.html")
+	if err != nil {
+		t.Fatalf("转换失败: %v", err)
+	}
+	if strings.Contains(got, "http://file:") {
+		t.Errorf("拼出了坏地址: %s", got)
+	}
+	if !strings.Contains(got, "(/wiki/x)") {
+		t.Errorf("相对链接应当原样保留: %s", got)
+	}
+
+	// http(s) 基址照旧补全
+	got, err = Convert(html, "https://example.com/a/b")
+	if err != nil {
+		t.Fatalf("转换失败: %v", err)
+	}
+	if !strings.Contains(got, "https://example.com/wiki/x") {
+		t.Errorf("http 基址应当补全相对链接: %s", got)
+	}
+}

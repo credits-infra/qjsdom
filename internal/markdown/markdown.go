@@ -14,6 +14,7 @@ package markdown
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
@@ -46,7 +47,11 @@ func Convert(htmlInput, pageURL string) (string, error) {
 		return "", nil
 	}
 	opts := []converter.ConvertOptionFunc{}
-	if pageURL != "" {
+	// 只有 http(s) 页面才拿来补全相对链接。实测:基址是 file:///tmp/x.html 时
+	// 库会把 `/wiki/x` 拼成 `http://file:/wiki/x` —— 一个谁也打不开的地址;
+	// 这种时候保留原样的相对链接更有用(与纯文本模式下的链接清单一致)。
+	if u, err := url.Parse(strings.TrimSpace(pageURL)); err == nil &&
+		(u.Scheme == "http" || u.Scheme == "https") {
 		opts = append(opts, converter.WithDomain(pageURL))
 	}
 	out, err := 转换器.ConvertString(htmlInput, opts...)
