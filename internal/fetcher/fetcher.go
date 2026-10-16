@@ -165,15 +165,7 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 	client := &http.Client{
 		Timeout: opt.Timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("重定向次数过多(>5)")
-			}
-			if !opt.AllowPrivate {
-				if err := guardSSRF(req.URL.Hostname()); err != nil {
-					return err
-				}
-			}
-			return nil
+			return 检查跳转(req, via, opt)
 		},
 	}
 
@@ -274,6 +266,21 @@ func fetchLocalFile(u *url.URL, opt Options) (*Result, error) {
 	}, nil
 }
 
+// 检查跳转 是 http.Client.CheckRedirect 的实现,抽成具名函数只为一件事:可测。
+// 第三轮交叉评审用变异测试证明过——把这里的逐跳校验删掉,现有测试全绿,也就是
+// 这条安全边界当时没有任何回归锁(见 fetcher 包的同名测试)。
+func 检查跳转(req *http.Request, via []*http.Request, opt Options) error {
+	if len(via) >= 5 {
+		return errors.New("重定向次数过多(>5)")
+	}
+	if !opt.AllowPrivate {
+		if err := guardSSRF(req.URL.Hostname()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // guardSSRF 拒绝解析到内网/回环/链路本地地址的目标。
 func guardSSRF(host string) error {
 	ips, err := net.LookupIP(host)
@@ -289,6 +296,12 @@ func guardSSRF(host string) error {
 		// 云环境元数据服务
 		if ip.String() == "169.254.169.254" {
 			return fmt.Errorf("拒绝访问元数据服务: %s", ip)
+		}
+		// RFC 6598 运营商级 NAT 保留段 100.64.0.0/10。云厂商把元数据服务放在这里:
+		// 实测 100.100.100.200(阿里云元数据地址)原先被放行,页面脚本真的发起了连接
+		// (本机无路由而超时)。第一轮与第三轮交叉评审都报过这个洞。
+		if ip4 := ip.To4(); ip4 != nil && ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return fmt.Errorf("拒绝访问运营商级 NAT 保留段(RFC 6598,云元数据常用): %s → %s", host, ip)
 		}
 	}
 	return nil
