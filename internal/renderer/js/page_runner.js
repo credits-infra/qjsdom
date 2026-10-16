@@ -68,34 +68,67 @@
 
   // ---- 正常路径 ----
   function runPage() {
+    const PHASE = __PHASE__;
     const { parseHTML } = Linkedom;
 
-    // ---- 1. 解析 HTML ----
-    const { document } = parseHTML(__HTML__);
-    globalThis.document = document;
-    if (typeof document.defaultView !== "undefined" && document.defaultView) {
-      globalThis.window = document.defaultView;
-      globalThis.window.document = document;
+    // ── 为什么拆成两个阶段 ──────────────────────────────────────────────
+    // quickjs 的宿主循环(js_std_loop)在【每次 eval 返回之后】抽干微任务队列。
+    // 页面脚本里的 Promise.then / fetch().then 回调都排在微任务里 —— 如果
+    // 抽取和它们挤在同一次 eval,抽取就跑在回调【之前】,回调改的 DOM 全部
+    // 白改(实测:then 里写入的文本进不了正文,拿到的还是旧内容)。
+    // 所以:阶段一只解析+跑脚本,把舞台交给宿主去抽微任务;阶段二再抽取。
+    let document = null;
+    let scripts = [];
+    let ran = 0;
+    let errs = [];
+
+    if (PHASE === "scripts") {
+      // ---- 1. 解析 HTML ----
+      ({ document } = parseHTML(__HTML__));
+      globalThis.document = document;
+      if (typeof document.defaultView !== "undefined" && document.defaultView) {
+        globalThis.window = document.defaultView;
+        globalThis.window.document = document;
+      }
+
+      // ---- 2. 执行页面内联脚本 ----
+      // 浏览器行为:解析到 <script> 就在全局作用域执行,var 会挂到 window 上。
+      // 这里用 (0, eval) 走间接调用 → 拿到全局作用域语义,而不是本函数的局部作用域。
+      // 单个脚本失败绝不允许影响后续 —— 逐个 try 包裹。
+      scripts = Array.from(document.querySelectorAll("script"));
+      for (const s of scripts) {
+        if (s.getAttribute && s.getAttribute("src")) continue;
+        let code = "";
+        try { code = s.textContent || ""; } catch (e) { continue; }
+        if (!code.trim()) continue;
+        try {
+          (0, eval)(code);
+          ran++;
+        } catch (e) {
+          errs.push(String((e && e.message) ? e.message : e).slice(0, 90));
+        }
+      }
+
+      // 交给宿主:这次 eval 一返回,微任务队列就会被抽干,之后才轮到阶段二。
+      globalThis.__qjsdom_脚本统计 = { ran: ran, errs: errs, scripts: scripts };
+      return JSON.stringify({ phase: "scripts", scriptTags: scripts.length, scriptsRan: ran });
     }
 
-    // ---- 2. 执行页面内联脚本 ----
-    // 浏览器行为:解析到 <script> 就在全局作用域执行,var 会挂到 window 上。
-    // 这里用 (0, eval) 走间接调用 → 拿到全局作用域语义,而不是本函数的局部作用域。
-    // 单个脚本失败绝不允许影响后续 —— 逐个 try 包裹。
-    const scripts = Array.from(document.querySelectorAll("script"));
-    let ran = 0;
-    const errs = [];
-    for (const s of scripts) {
-      if (s.getAttribute && s.getAttribute("src")) continue;
-      let code = "";
-      try { code = s.textContent || ""; } catch (e) { continue; }
-      if (!code.trim()) continue;
-      try {
-        (0, eval)(code);
-        ran++;
-      } catch (e) {
-        errs.push(String((e && e.message) ? e.message : e).slice(0, 90));
-      }
+    // ---- 阶段二:抽取 ----
+    // 文档与脚本统计都从全局取:既不重新解析(那会丢掉脚本刚做的改动),
+    // 也绝不重跑脚本。
+    document = globalThis.document;
+    const st = globalThis.__qjsdom_脚本统计;
+    if (!document) {
+      // 阶段一没跑成(DOM 库在解析时就炸了)。这里只补解析、不跑脚本 ——
+      // 重跑一遍脚本是错误的:副作用执行两次,而且多半还是会炸。
+      ({ document } = parseHTML(__HTML__));
+      globalThis.document = document;
+      errs.push("note: 脚本阶段未完成,本次未执行页面脚本");
+    } else if (st) {
+      scripts = st.scripts || [];
+      ran = st.ran || 0;
+      errs = st.errs || [];
     }
 
     // ---- 3. 提取内容(按 mode 分流)----

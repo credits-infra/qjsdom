@@ -184,8 +184,20 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 		}
 	}
 
-	script := buildRunner(html, pageURL, opt)
-	v, err := ctx.Eval("page_runner.js", qjs.Code(script))
+	// 两次 eval,中间隔着宿主对微任务队列的抽干 —— 顺序是这里全部的意义所在。
+	//
+	// quickjs 的 js_std_loop 在每次 Eval 返回后跑:它会抽干 Promise 作业队列,
+	// 于是页面脚本里 fetch().then(cb) / Promise.then(cb) 的回调都在【第一次
+	// Eval 返回之后】才执行。若抽取和脚本挤在一次 eval 里,回调改到的 DOM
+	// 永远进不了结果(实测过:then 里写入的文本,正文里还是旧内容)。
+	// 所以:阶段一跑脚本 → Eval 返回 → 宿主抽微任务 → 阶段二抽取。
+	if v, err := ctx.Eval("page_runner.js", qjs.Code(buildRunner(html, pageURL, opt, "scripts"))); err != nil {
+		return nil, fmt.Errorf("页面脚本阶段失败: %w", err)
+	} else {
+		v.Free()
+	}
+
+	v, err := ctx.Eval("page_runner.js", qjs.Code(buildRunner(html, pageURL, opt, "extract")))
 	if err != nil {
 		return nil, fmt.Errorf("页面处理失败: %w", err)
 	}
@@ -277,7 +289,7 @@ func downloadPageImages(out *Result, pageURL string, opt Options) {
 
 // buildRunner 把三个占位符替换为 JSON 字面量。
 // 用 JSON 编码而不是裸字符串拼接 —— HTML 里任何引号/反斜杠/换行都会被正确转义。
-func buildRunner(html, pageURL string, opt Options) string {
+func buildRunner(html, pageURL string, opt Options, phase string) string {
 	htmlLit, _ := json.Marshal(html)
 	urlLit, _ := json.Marshal(pageURL)
 	selLit, _ := json.Marshal(opt.Selector)
@@ -301,6 +313,9 @@ func buildRunner(html, pageURL string, opt Options) string {
 	s = strings.ReplaceAll(s, "__URL__", string(urlLit))
 	s = strings.ReplaceAll(s, "__SELECTOR__", string(selLit))
 	s = strings.ReplaceAll(s, "__MODE__", string(modeLit))
+	// 阶段:scripts(解析 + 跑脚本)/ extract(抽取)。见 RunPage 里的两阶段说明。
+	phaseLit, _ := json.Marshal(phase)
+	s = strings.ReplaceAll(s, "__PHASE__", string(phaseLit))
 	return s
 }
 
