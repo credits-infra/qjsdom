@@ -94,3 +94,26 @@ func Test预算零值用默认值(t *testing.T) {
 		t.Errorf("零值应当走默认预算(10s)而不是 0:转发 %d 次,正文=%q", 命中(), res.Text)
 	}
 }
+
+// Test小预算下第一次请求仍放出 —— 第四轮交叉评审 B2(高)。
+//
+// 预算原先从【渲染开始】计时,而 DOM 与 bundle 初始化实测要 200~300ms:于是
+// 100ms/200ms 这类小预算会把第一次请求就拒掉(评审实测 1ns/1ms/50ms 三档全是 0 次转发)。
+// 那不是"限制联网时间",是"把联网整个关掉"。现在起点钉在第一次真的联网那一刻。
+func Test小预算下第一次请求仍放出(t *testing.T) {
+	srv, 命中 := 慢服务(t, 10*time.Millisecond)
+
+	opt := 测试选项带基准()
+	opt.JSFetchBudget = 200 * time.Millisecond // 比初始化耗时还小
+	res, err := Render(慢页, srv.URL+"/p", opt)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	t.Logf("预算 200ms(服务器每次 10ms):转发 %d 次,正文=%q", 命中(), res.Text)
+	if 命中() == 0 {
+		t.Errorf("小预算不该把第一次请求就拒掉 —— 那等于关掉联网,而不是限制它")
+	}
+	if !strings.Contains(res.Text, "ok4") {
+		t.Errorf("5 次请求总共才 50ms,200ms 预算内应当全部发出:正文=%q", res.Text)
+	}
+}

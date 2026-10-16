@@ -118,10 +118,11 @@ type Options struct {
 	DisableScriptSrc bool
 	// FetchOptions 供图片探测使用的网络参数。
 	FetchOptions fetcher.Options
-	// JSFetchBudget 页面脚本联网的总时间预算(零值 = 10 秒)。
+	// JSFetchBudget 整页联网的时间预算(零值 = 10 秒)。
 	//
-	// 从渲染开始计时,而不是从第一次请求算起。用尽之后后续请求直接失败,并在
-	// scriptErrs 里说明原因 —— 宁可少取且说清为什么,也不要为了取全让整页卡住。
+	// 三条出站通路共用这一个窗口:外链脚本、页面脚本的 fetch/XHR、Image 探测。
+	// 起点是第一次真的联网那一刻(DOM 初始化不计入),用尽之后后续请求直接失败,
+	// 并在 scriptErrs 里留一条说明 —— 宁可少取且说清为什么,也不要为了取全让整页卡住。
 	JSFetchBudget time.Duration
 
 	// DownloadImages 是否把页面里的 <img> 下载到 ImagesDir。
@@ -176,11 +177,51 @@ const (
 	// 页面脚本单次响应的字节上限。这类请求取的多是 JSON,不需要页面级的 4MB 配额 ——
 	// 一页 15 次 × 4MB 就是 60MB,那才是真会打爆内存的地方。
 	maxJSFetchBytes = 1 << 20 // 1MB
-	// 页面脚本联网的总时间预算(零值走这里,可用 Options.JSFetchBudget 覆盖)。
-	// 次数上限管"多少次",这一道管"多久":十五次各自等满超时同样能把整页拖住,
-	// 实测最坏情况约 150 秒且串行不可打断。
+	// 整页联网的时间预算(零值走这里,可用 Options.JSFetchBudget 覆盖)。
+	// 次数上限管"多少次",这一道管"多久":十五次各自等满超时同样能把整页拖住。
 	maxJSFetchTotal = 10 * time.Second
 )
+
+// 网络预算 是整页共用的一个联网时间窗口:三条出站通路(外链脚本 / 页面脚本的
+// fetch 与 XHR / Image 探测)都从它这里问"还能不能发"。
+//
+// 两个语义是刻意的,都是第四轮交叉评审报出来的:
+//
+//	① 起点是【第一次真的联网】那一刻,不是渲染开始。DOM 与 bundle 初始化实测要
+//	   200~300ms,从渲染起算会让 100~200ms 这类小预算把第一次请求就拒掉(B2)——
+//	   那等于小预算直接关掉了这个能力,而不是限制它。
+//	② 三条通路共用同一个窗口,而不是各给一份。各给一份的话最坏耗时是 3 倍预算
+//	   ("给页面 N 秒"就不成立了):评审实测 Image 探测 20×8s=160s、
+//	   外链脚本 10×8s=80s,都不受原预算约束(B1)。
+type 网络预算 struct {
+	上限 time.Duration
+	起点 time.Time
+	耗尽 bool
+}
+
+// 有效预算 把零值/负值换成默认值。
+func 有效预算(d time.Duration) time.Duration {
+	if d <= 0 {
+		return maxJSFetchTotal
+	}
+	return d
+}
+
+// 用尽 报告预算是否已用完。第一次调用把起点钉在当下 —— 所以第一次联网永远放行。
+func (b *网络预算) 用尽() bool {
+	if b == nil || b.上限 <= 0 {
+		return false
+	}
+	if b.起点.IsZero() {
+		b.起点 = time.Now()
+		return false
+	}
+	if time.Since(b.起点) >= b.上限 {
+		b.耗尽 = true
+		return true
+	}
+	return false
+}
 
 const EngineVersion = "qjsdom/0.1 (qjs + linkedom, CGO-free)"
 
@@ -194,6 +235,9 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	// 文档地址本身仍然交给 location.href,两者不能混。
 	基准 := 有效基准(html, pageURL)
 
+	// 整页共用的联网时间预算:三条出站通路都从这里问"还能不能发"。
+	预算 := &网络预算{上限: 有效预算(opt.JSFetchBudget)}
+
 	rt, err := qjs.New()
 	if err != nil {
 		return nil, fmt.Errorf("qjs 运行时启动失败: %w", err)
@@ -205,20 +249,20 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	// 注册宿主网络能力。必须在 eval image_fetch.js 之前 ——
 	// 那个脚本靠 typeof __qjsdom_imageProbe 判断网络层是否可用。
 	if !opt.DisableImages {
-		registerImageProbe(ctx, 基准, opt)
+		registerImageProbe(ctx, 基准, opt, 预算)
 	}
 
 	// 外链脚本先取回来内联,再交给 runner —— 顺序就是源码里的顺序。
 	var 脚本提示 []string
 	if !opt.DisableScriptSrc {
-		html, 脚本提示 = 展开外部脚本(html, 基准, opt)
+		html, 脚本提示 = 展开外部脚本(html, 基准, opt, 预算)
 	}
 
 	// 页面脚本的网络能力(globalThis.fetch / XMLHttpRequest)。在 host_shims
 	// 之后注入 —— shim 里用到 TextEncoder(host_shims 提供)。
 	var 注入提示 string
 	if !opt.DisableJSFetch {
-		注入提示 = registerJSFetch(ctx, 基准, opt)
+		注入提示 = registerJSFetch(ctx, 基准, opt, 预算)
 	}
 
 	if _, err := ctx.Eval("host_shims.js", qjs.Code(hostShims)); err != nil {
@@ -406,7 +450,7 @@ func buildRunner(html, pageURL, 基准 string, opt Options, phase string) string
 //
 // JS 侧拿到的是 JSON 字符串(而不是对象)—— 避免在两种运行时之间
 // 传递复杂对象,也让失败情况能统一用 {ok:false,error:...} 表达。
-func registerImageProbe(ctx *qjs.Context, 基准 string, opt Options) {
+func registerImageProbe(ctx *qjs.Context, 基准 string, opt Options, 预算 *网络预算) {
 	fo := opt.FetchOptions
 	if fo.UserAgent == "" {
 		fo = fetcher.DefaultOptions()
@@ -458,7 +502,7 @@ func registerImageProbe(ctx *qjs.Context, 基准 string, opt Options) {
 //   - 单次响应字节上限 —— 页面脚本取的多是 JSON,不需要 4MB 的页面级配额。
 //
 // 返回值为非空时表示有需要注意的情况(shim 注入失败),由调用方记进 scriptErrs。
-func registerJSFetch(ctx *qjs.Context, 基准 string, opt Options) string {
+func registerJSFetch(ctx *qjs.Context, 基准 string, opt Options, 预算 *网络预算) string {
 	fo := opt.FetchOptions
 	if fo.UserAgent == "" {
 		fo = fetcher.DefaultOptions()
@@ -475,12 +519,6 @@ func registerJSFetch(ctx *qjs.Context, 基准 string, opt Options) string {
 	if 基准 != "" {
 		base, _ = url.Parse(基准)
 	}
-
-	预算 := opt.JSFetchBudget
-	if 预算 <= 0 {
-		预算 = maxJSFetchTotal
-	}
-	起点 := time.Now()
 
 	剩余 := maxJSFetchPerPage
 	ctx.SetFunc("__qjsdom_httpFetch", func(this *qjs.This) (*qjs.Value, error) {
@@ -502,10 +540,11 @@ func registerJSFetch(ctx *qjs.Context, 基准 string, opt Options) string {
 				"本页页面脚本发起的请求已达上限(%d),后续请求不再转发", maxJSFetchPerPage))), nil
 		}
 		// 时间预算:次数上限管"多少次",这一道管"多久" —— 两者都要。
-		if 用时 := time.Since(起点); 用时 >= 预算 {
+		// 预算对象是整页共用的(外链脚本与 Image 探测也守它),起点在第一次联网时钉住。
+		if 预算.用尽() {
 			return c.NewString(错误JSON(fmt.Sprintf(
-				"本页页面脚本的网络时间预算已用尽(%s):为免整页被拖住,后续请求不再转发",
-				预算))), nil
+				"本页的网络时间预算已用尽(%s):为免整页被拖住,后续请求不再转发",
+				预算.上限))), nil
 		}
 		剩余--
 
