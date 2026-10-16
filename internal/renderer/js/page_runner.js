@@ -107,6 +107,9 @@
     // 脚本把整页拖住。
     const 脚本轮数上限 = 3;
 
+    // 单脚本字节上限(由 Go 侧传入,与 scriptsrc.go 的 maxScriptSrcBytes 同源)
+    const 最大脚本字节 = __MAX_SCRIPT_BYTES__;
+
     const 脚本错误信息 = (e, 来源) => {
       const msg = String((e && e.message) ? e.message : e).slice(0, 90);
       let 位置 = "";
@@ -167,9 +170,16 @@
           }
 
           if (src) {
-            // Go 侧已内联的外链脚本没有 src(标签被替换掉了)。走到这里的是
-            // 【document.write 注入的外链脚本】,只能在 JS 侧取回 —— 走的是
-            // 同一条守卫通路(协议白名单 + SSRF 守卫),次数也算进每页上限。
+            // ①Go 侧判定过"不执行"的脚本带 data-qjsdom-skip —— 它的判定是最终的。
+            // 少了这一句,Go 侧那些上限(404 / text-html / 超上限 / 数量上限 /
+            // module / 数据块)会被这里的重新取回全部绕过:实测 404 的 JS 体与
+            // 超上限脚本的前缀都被执行了,而 scriptErrs 同时写着"取不到"(自相矛盾)。
+            let 跳过原因 = "";
+            try { 跳过原因 = s.getAttribute("data-qjsdom-skip") || ""; } catch (e) {}
+            if (跳过原因) continue;
+
+            // ②剩下的是【document.write 注入的外链脚本】,只能在 JS 侧取回 ——
+            // 走同一条守卫通路(协议白名单 + SSRF 守卫),次数也算进每页上限。
             if (模块) {
               errs.push("document.write 注入的 module 脚本未执行(" + src + "): 需要 import 支持");
               continue;
@@ -187,6 +197,22 @@
             try { r = JSON.parse(String(__qjsdom_httpFetch(src, "GET"))); } catch (e) { r = { error: String(e) }; }
             if (!r || r.error) {
               errs.push("document.write 注入的外链脚本取不到(" + src + "): " + ((r && r.error) || "未知错误"));
+              continue;
+            }
+            // ③与 Go 侧同等的校验:非 2xx、声明 text/html、超过单脚本上限的都不执行。
+            // 少了这一段,document.write 注入的脚本就成了一条更宽松的第二通路。
+            if (!(r.status >= 200 && r.status < 300)) {
+              errs.push("document.write 注入的外链脚本未执行(" + src + "): HTTP " + r.status);
+              continue;
+            }
+            const 类型头 = String((r.headers || {})["content-type"] || "").toLowerCase();
+            if (类型头.indexOf("html") >= 0) {
+              errs.push("document.write 注入的外链脚本未执行(" + src + "): 响应类型是 " + 类型头 + ",不是脚本");
+              continue;
+            }
+            if (r.truncated || Number(r.bytes || 0) > 最大脚本字节) {
+              errs.push("document.write 注入的外链脚本未执行(" + src +
+                "): 超过单脚本上限 " + 最大脚本字节 + " 字节");
               continue;
             }
             try {

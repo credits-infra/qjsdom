@@ -68,7 +68,7 @@ func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
 		属性 := m[1] + " " + m[5]
 		src := 首个非空(m[2], m[3], m[4])
 		if src == "" {
-			return tag
+			return 标记跳过(tag, "empty-src")
 		}
 
 		类型 := 属性值(属性, "type")
@@ -78,20 +78,21 @@ func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
 				notes = append(notes, "note: 跳过 type=\"module\" 的外链脚本(需要 import 支持)")
 				模块提示过 = true
 			}
-			return tag
+			return 标记跳过(tag, "module")
 		}
 		if 类型 != "" && !是JS类型(类型) {
-			return tag // 数据块(application/json 之类),本就不是可执行脚本
+			// 数据块(application/json 之类)本就不是可执行脚本
+			return 标记跳过(tag, "not-js-type")
 		}
 		// data: / javascript: 之类的地址没有"取"的意义,留给页面自己
 		if strings.HasPrefix(src, "data:") || strings.HasPrefix(src, "javascript:") {
-			return tag
+			return 标记跳过(tag, "inline-scheme")
 		}
 
 		if 取了 >= maxScriptSrcCount {
 			notes = append(notes, fmt.Sprintf(
 				"note: 外链脚本超过 %d 个,其余未加载(从 %s 起)", maxScriptSrcCount, src))
-			return tag
+			return 标记跳过(tag, "over-count")
 		}
 		取了++
 
@@ -104,28 +105,28 @@ func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
 		res, err := fetcher.Fetch(abs, fo)
 		if err != nil {
 			notes = append(notes, fmt.Sprintf("note: 外链脚本取不到(%s): %v", src, err))
-			return tag
+			return 标记跳过(tag, "fetch-failed")
 		}
 		// 非 2xx 一律当取不到。实测教训:404 的响应体是 html 错误页,把它当脚本内联
 		// 进去执行,只会往 scriptErrs 里灌一行 "expecting ';'" 这种没头没尾的语法错,
 		// 掩盖真正的原因(取不到)。
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			notes = append(notes, fmt.Sprintf("note: 外链脚本取不到(%s): HTTP %d", src, res.StatusCode))
-			return tag
+			return 标记跳过(tag, "http-status")
 		}
 		// 超过单脚本上限被截断的不要执行:半个脚本只会报一句没头没尾的语法错,
 		// 把真正的原因(脚本太大)埋掉 —— 与"取不到"一样处理:留名、留原因、跳过。
 		if res.Truncated {
 			notes = append(notes, fmt.Sprintf(
 				"note: 外链脚本未执行(%s): 超过单脚本上限 %d 字节,响应被截断", src, maxScriptSrcBytes))
-			return tag
+			return 标记跳过(tag, "truncated")
 		}
 		// 响应明确是 HTML 也不执行(错误页、登录页、反爬拦截页都长这样)。
 		// 浏览器会执行非 JS 类型的脚本内容,但那是历史包袱;抓取器不需要这个行为。
 		if ct := res.Header.Get("Content-Type"); 是HTML响应(ct) {
 			notes = append(notes, fmt.Sprintf(
 				"note: 跳过外链脚本(%s): 响应类型是 %s,不是脚本", src, ct))
-			return tag
+			return 标记跳过(tag, "text-html")
 		}
 
 		// 内联回原位置。带上来源标签:出错时 runner 会把地址写进 scriptErrs ——
@@ -149,6 +150,24 @@ func 是HTML响应(contentType string) bool {
 // 拼接处的风险只在这一处,所以只在这一处处理:HTML 规范里必须转义。
 func 去尾标签(code string) string {
 	return strings.ReplaceAll(code, "</script", `<\/script`)
+}
+
+// 标记跳过 给"不再执行"的 <script> 打个标记,原因用短标识(不塞 URL —— 那会
+// 让属性值变得难读,而且 URL 本身已经在 scriptErrs 里点名了)。
+//
+// 为什么必须有这个标记:JS 侧的分轮执行要处理 document.write 注入的脚本,它看到
+// 带 src 的标签就会取回来执行。如果没有标记,Go 侧所有这些"不执行"的判定
+// (404 / text-html / 超上限 / 超过数量上限 / module / 数据块)都会被它绕过去 ——
+// 第三轮交叉评审实测:404 的 JS 体与超上限脚本的前缀都被重新执行了,而 scriptErrs
+// 同时写着"取不到",输出自相矛盾。判定的归属必须唯一:Go 侧说了不执行就不执行。
+//
+func 标记跳过(tag, 原因 string) string {
+	i := strings.Index(tag, "<script")
+	if i < 0 {
+		return tag
+	}
+	j := i + len("<script")
+	return tag[:j] + ` data-qjsdom-skip="` + 标签转义(原因) + `"` + tag[j:]
 }
 
 // 标签转义 让属性值里不会出现引号(URL 里的 " 用 %22 表达,不影响可读性,

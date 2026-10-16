@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -370,6 +371,9 @@ func buildRunner(html, pageURL string, opt Options, phase string) string {
 	phaseLit, _ := json.Marshal(phase)
 	s = strings.ReplaceAll(s, "__PHASE__", string(phaseLit))
 	s = strings.ReplaceAll(s, "__ALLOW_SCRIPT_SRC__", allowSrcLit)
+	// JS 侧取回的外链脚本(只可能是 document.write 注入的)也要守同一条上限 ——
+	// 数字从 Go 传过去,免得两处各写一个 512KB。
+	s = strings.ReplaceAll(s, "__MAX_SCRIPT_BYTES__", strconv.Itoa(maxScriptSrcBytes))
 	return s
 }
 
@@ -491,6 +495,9 @@ func registerJSFetch(ctx *qjs.Context, pageURL string, opt Options) string {
 			"redirected": res.Redirected,
 			"headers":    hdr,
 			"body":       res.HTML,
+			// 让 JS 侧也能按同一套规则判定:被截断的/超大的脚本不执行
+			"bytes":     res.Bytes,
+			"truncated": res.Truncated,
 		})
 		if err != nil {
 			return c.NewString(错误JSON("响应编码失败")), nil
