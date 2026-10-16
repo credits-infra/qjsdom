@@ -481,6 +481,13 @@ func registerImageProbe(ctx *qjs.Context, 基准 string, opt Options, 预算 *�
 			}
 		}
 
+		// 图片探测最坏是 20 张 × 8s = 160s(比当初担心的 fetch 150s 还大),
+		// 同样守整页共用的预算。失败对页面脚本就是"这张图加载失败",语义不变。
+		if 预算.用尽() {
+			return c.NewString(fmt.Sprintf(`{"ok":false,"error":"本页联网时间预算已用尽(%s)"}`,
+				预算.上限)), nil
+		}
+
 		info := fetcher.ProbeImage(abs, fo)
 		b, err := json.Marshal(info)
 		if err != nil {

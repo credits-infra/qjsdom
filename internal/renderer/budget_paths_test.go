@@ -54,3 +54,38 @@ func Test外链脚本也守同一预算(t *testing.T) {
 		t.Errorf("被预算拦下必须留说明,实际 errs=%v", res.ScriptErrs)
 	}
 }
+
+// Test图片探测也守同一预算 —— B1 的另一半。
+// 探测最坏 20 张 × 8s = 160s,是三条通路里最大的那个上界。
+func Test图片探测也守同一预算(t *testing.T) {
+	var 命中 int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&命中, 1)
+		time.Sleep(150 * time.Millisecond)
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(造小PNG(t, 8, 8))
+	}))
+	t.Cleanup(srv.Close)
+
+	html := `<!DOCTYPE html><html lang="zh"><head><title>预算</title></head><body>
+<article id="c"><p>原文本</p>
+<script>
+for (var i = 0; i < 8; i++) { var im = new Image(); im.src = "/p" + i + ".png"; }
+document.querySelector("#c p").textContent = "探测已发起";
+</script>
+</article></body></html>`
+
+	opt := 探测选项()
+	opt.JSFetchBudget = 400 * time.Millisecond // 8 张 × 150ms ≈ 1200ms,必然不够
+	res, err := Render(html, srv.URL+"/page", opt)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	t.Logf("图片探测:服务端收到 %d 次,正文=%q", atomic.LoadInt32(&命中), res.Text)
+	if !strings.Contains(res.Text, "探测已发起") {
+		t.Fatalf("页面脚本没跑完:%q", res.Text)
+	}
+	if 取回 := atomic.LoadInt32(&命中); 取回 >= 8 {
+		t.Errorf("8 张慢图应当被预算拦下至少几张,实际全部探完(%d 次)", 取回)
+	}
+}
