@@ -123,3 +123,48 @@ func Test预算用尽写进scriptErrs(t *testing.T) {
 		t.Errorf("预算用尽必须在 scriptErrs 里留痕(与页面脚本是否 catch 无关),实际=%v", res.ScriptErrs)
 	}
 }
+
+// Test最坏耗时是预算加一次在途请求 —— 把 B1 的"有界"这个结论本身钉住。
+//
+// 预算是"还能不能发新的请求",不是"掐断已经在飞的请求":起点钉在第一次联网那一刻,
+// 而那次请求可能正好在预算边缘发出、又要跑满自己的超时。所以整页上界是
+// 【预算 + 单次请求最长耗时】,不是无限、也不是 3 倍预算(三条通路共用一个窗口)。
+func Test最坏耗时是预算加一次在途请求(t *testing.T) {
+	var 命中 int32
+	mux := http.NewServeMux()
+	for i := 1; i <= 4; i++ {
+		i := i
+		mux.HandleFunc("/慢"+string(rune('0'+i))+".js", func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&命中, 1)
+			time.Sleep(800 * time.Millisecond) // 每个都慢
+			w.Header().Set("Content-Type", "application/javascript")
+			w.Write([]byte(`window.__x = ` + string(rune('0'+i)) + `;`))
+		})
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	html := `<!DOCTYPE html><html lang="zh"><head><title>上界</title></head><body>` +
+		`<article id="c"><p>原文本</p></article>` +
+		`<script src="/慢1.js"></script><script src="/慢2.js"></script>` +
+		`<script src="/慢3.js"></script><script src="/慢4.js"></script>` +
+		`</body></html>`
+
+	opt := 测试选项带基准()
+	opt.JSFetchBudget = 200 * time.Millisecond
+	res, err := Render(html, srv.URL+"/p", opt)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	t.Logf("4 个各 800ms 的脚本 + 200ms 预算:取回 %d 个,整页耗时 %v", atomic.LoadInt32(&命中), res.Elapsed)
+
+	if 取回 := atomic.LoadInt32(&命中); 取回 != 1 {
+		t.Errorf("只有第一次请求该发出去(起点就是它),实际 %d 次", 取回)
+	}
+	// 若不共用窗口、也没有"只拦新请求"的语义,这里会是 4×800ms=3.2s。
+	// 实测值 1.9s(含 QJS 运行时初始化与销毁,约 1.0s),所以阈值放到 2.5s:
+	// 断言的判别点是"远小于 3.2s",不是精确等于某一次请求的耗时。
+	if res.Elapsed > 2500*time.Millisecond {
+		t.Errorf("整页耗时应当约等于一次在途请求,实际 %v —— 预算没起到界的作用", res.Elapsed)
+	}
+}

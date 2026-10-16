@@ -477,6 +477,10 @@ Two details are deliberate, and both came out of measurements rather than taste:
   budgets would make the worst case three times the number, and the sentence "a page
   gets N seconds of network" would stop being true.
 
+The budget gates new requests; it does not abort one already in flight. So the bound for
+a whole page is the budget plus one request's own timeout — with the default ten seconds
+and the 8-second cap on scripts and probes, under twenty seconds measured end to end.
+
 Time-based rather than another count, deliberately: slow pages are the failure mode,
 while a page making fifteen fast requests is fine and should get all fifteen.
 ## Paths not taken
