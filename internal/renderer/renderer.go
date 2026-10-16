@@ -44,6 +44,9 @@ var imageFetch string
 //go:embed js/fetch_shim.js
 var fetchShim string
 
+//go:embed js/document_write.js
+var documentWriteShim string
+
 //go:embed assets/linkedom.core.js
 var linkedomBundle string
 
@@ -210,6 +213,12 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	if _, err := ctx.Eval("linkedom.js", qjs.Code(linkedomBundle)); err != nil {
 		return nil, fmt.Errorf("linkedom 注入失败: %w", err)
 	}
+	// document.write 之类 linkedom 没有的方法的 shim。必须在 page_runner 之前 ——
+	// runner 解析完文档就会去装它。这里只定义"安装函数",真正的安装发生在
+	// 每页那份 document 建好之后(方法要挂在 document 实例上)。
+	if _, err := ctx.Eval("document_write.js", qjs.Code(documentWriteShim)); err != nil {
+		return nil, fmt.Errorf("document.write shim 注入失败: %w", err)
+	}
 	// 用真实网络版 Image 覆盖 host_shims 里的简易实现
 	if !opt.DisableImages {
 		if _, err := ctx.Eval("image_fetch.js", qjs.Code(imageFetch)); err != nil {
@@ -342,6 +351,13 @@ func buildRunner(html, pageURL string, opt Options, phase string) string {
 		needHTMLLit = "true"
 	}
 
+	// 允许外链脚本 = 既没关掉 <script src> 加载,也没有关掉页面脚本的网络能力
+	// (document.write 注入的外链脚本只能在 JS 侧取回,需要后者)。
+	allowSrcLit := "false"
+	if !opt.DisableScriptSrc && !opt.DisableJSFetch {
+		allowSrcLit = "true"
+	}
+
 	s := pageRunner
 	// ⚠️ 顺序要紧:__HTML__ 是 __NEED_HTML__ 的子串,先替换 __HTML__ 会把
 	// 后者改写成 __NEED_<html 字面量>,占位符就再也匹配不上了。
@@ -353,6 +369,7 @@ func buildRunner(html, pageURL string, opt Options, phase string) string {
 	// 阶段:scripts(解析 + 跑脚本)/ extract(抽取)。见 RunPage 里的两阶段说明。
 	phaseLit, _ := json.Marshal(phase)
 	s = strings.ReplaceAll(s, "__PHASE__", string(phaseLit))
+	s = strings.ReplaceAll(s, "__ALLOW_SCRIPT_SRC__", allowSrcLit)
 	return s
 }
 

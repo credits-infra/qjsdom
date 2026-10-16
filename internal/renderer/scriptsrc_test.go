@@ -165,3 +165,61 @@ func Test外链脚本出错时点名来源(t *testing.T) {
 		t.Errorf("外链脚本的报错也应当带行号,实际:%s", 记录)
 	}
 }
+
+// Test数据块不被当脚本执行 钉住一个实测出来的噪音源:JSON-LD、application/json、
+// text/template 这些【数据块】在浏览器里从不执行,而此前我们把它们当脚本 eval,
+// 结果是 scriptErrs 里多出三条 "expecting ';'" / "unexpected token '<'",
+// 真正有用的错误反而被埋掉。
+func Test数据块不被当脚本执行(t *testing.T) {
+	html := `<!DOCTYPE html><html lang="zh"><head><title>数据块</title>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article"}</script>
+<script type="text/template"><div>模板不该执行</div></script>
+<script type="application/json">{"a":1}</script>
+</head><body>
+<article id="c"><p>正文</p></article>
+<script>document.querySelector("#c p").textContent = "正文(脚本已跑)";</script>
+</body></html>`
+	res, err := Render(html, "https://example.com/x",
+		Options{Mode: ModeArticle, Selector: "#c", DisableImages: true})
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	// 只断言"没有报错":"note:" 开头的说明是另一回事(例如 RunScripts=false 的提示)
+	var 报错 []string
+	for _, e := range res.ScriptErrs {
+		if !strings.HasPrefix(e, "note:") {
+			报错 = append(报错, e)
+		}
+	}
+	if len(报错) > 0 {
+		t.Errorf("数据块不该产生任何脚本报错,实际:%v", 报错)
+	}
+	if !strings.Contains(res.Text, "正文(脚本已跑)") {
+		t.Errorf("真正的脚本该照跑: %q", res.Text)
+	}
+	if res.ScriptsRan != 1 {
+		t.Errorf("只该有一个脚本执行,实际 %d(scriptTags=%d)", res.ScriptsRan, res.ScriptTags)
+	}
+}
+
+// Test内联module按普通脚本执行并留提示 module 需要 import 解析,我们没有;
+// 但内联 module 里有不少是无 import 的,直接跳过会白丢内容 —— 所以照跑,并记一条
+// 说明 import 不会解析。外链 module 则跳过(Go 侧已记原因)。
+func Test内联module按普通脚本执行并留提示(t *testing.T) {
+	html := `<!DOCTYPE html><html lang="zh"><head><title>module</title></head><body>
+<article id="c"><p>原文本</p>
+<script type="module">document.querySelector("#c p").textContent = "内联 module 跑过了";</script>
+</article>
+</body></html>`
+	res, err := Render(html, "https://example.com/x",
+		Options{Mode: ModeArticle, Selector: "#c", DisableImages: true})
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	if !strings.Contains(res.Text, "内联 module 跑过了") {
+		t.Errorf("无 import 的内联 module 不该被丢掉: %q", res.Text)
+	}
+	if !strings.Contains(strings.Join(res.ScriptErrs, " "), "type=module") {
+		t.Errorf("应当说明 import 不会解析,实际:%v", res.ScriptErrs)
+	}
+}

@@ -86,6 +86,27 @@
     // 实测:一句 "not a function" 在多脚本页面上等于没信息 —— 而 qjs 的 e.stack
     // 带行列号,顶帧就是页面脚本里的位置(形如 "at <eval> (<input>:2:21)")。
     // 外链脚本由 Go 侧内联时带了来源标签,拼在最前面。
+    // 脚本类型判定 —— 与 Go 侧内联外链脚本用同一套规则:
+    //   * 空 / JS MIME → 可执行;
+    //   * type=module → 内联的按普通脚本执行(import 解析不了,记一条),
+    //     外链的跳过(Go 侧已记过);
+    //   * application/json、ld+json、text/template 之类是【数据块】,不是脚本。
+    //     浏览器不执行它们,我们也不该执行 —— 实测照跑会往 scriptErrs 里灌三条
+    //     "expecting ';'" / "unexpected token '<'" 之类的噪音,把真错误埋掉。
+    const 脚本类型 = (s) => {
+      try { return String((s.getAttribute && s.getAttribute("type")) || "").trim().toLowerCase().split(";")[0].trim(); }
+      catch (e) { return ""; }
+    };
+    const 是可执行类型 = (t) => t === "" || t === "text/javascript" ||
+      t === "application/javascript" || t === "application/x-javascript" ||
+      t === "text/ecmascript" || t === "application/ecmascript" || t === "text/jscript";
+    let 已提示模块 = false;
+
+    // 脚本执行轮数上限:第一轮 + document.write 注入的后续批。
+    // 3 轮足够覆盖"脚本写出脚本再写出内容"的常见形态,又不至于让自我复制的
+    // 脚本把整页拖住。
+    const 脚本轮数上限 = 3;
+
     const 脚本错误信息 = (e, 来源) => {
       const msg = String((e && e.message) ? e.message : e).slice(0, 90);
       let 位置 = "";
@@ -101,6 +122,11 @@
       // ---- 1. 解析 HTML ----
       ({ document } = parseHTML(__HTML__));
       globalThis.document = document;
+      // document.write / writeln / open / close 的 shim —— linkedom 没有这四个方法。
+      // 只补这一层:解析交给 innerHTML(linkedom 自己的解析器),搬运用原生 DOM 方法。
+      try {
+        if (typeof __qjsdom_安装documentWrite === "function") __qjsdom_安装documentWrite(document);
+      } catch (e) { /* 装不上不算致命,页面脚本照旧能跑 */ }
       if (typeof document.defaultView !== "undefined" && document.defaultView) {
         globalThis.window = document.defaultView;
         globalThis.window.document = document;
@@ -110,23 +136,93 @@
       // 浏览器行为:解析到 <script> 就在全局作用域执行,var 会挂到 window 上。
       // 这里用 (0, eval) 走间接调用 → 拿到全局作用域语义,而不是本函数的局部作用域。
       // 单个脚本失败绝不允许影响后续 —— 逐个 try 包裹。
-      scripts = Array.from(document.querySelectorAll("script"));
-      for (const s of scripts) {
-        if (s.getAttribute && s.getAttribute("src")) continue;
-        let code = "";
-        try { code = s.textContent || ""; } catch (e) { continue; }
-        if (!code.trim()) continue;
-        // 外链脚本(由 Go 侧取回并内联)带来源标签 —— 报错时点名,否则
-        // 页面上脚本一多就只剩下一句"某某不是函数"。
-        let 来源 = "";
-        try { 来源 = s.getAttribute("data-qjsdom-from") || ""; } catch (e) {}
-        try {
-          (0, eval)(code);
-          ran++;
-        } catch (e) {
-          errs.push(脚本错误信息(e, 来源));
+      // 分轮执行:第一轮是文档里原有的脚本;之后每轮处理 【document.write 注入
+      // 进来的脚本】(浏览器也会执行它们 —— 旧式页面就靠这个把内容写进文档)。
+      // 轮数必须设上限:脚本可以写出新脚本,不设限就是死循环。
+      const 标记已跑 = (s) => { try { s.__qjsdom已执行 = true; } catch (e) {} };
+      const 跑过没 = (s) => { try { return !!s.__qjsdom已执行; } catch (e) { return false; } };
+      const 允许外链 = __ALLOW_SCRIPT_SRC__;
+
+      for (let 轮 = 0; 轮 < 脚本轮数上限; 轮++) {
+        const 本轮 = Array.from(document.querySelectorAll("script")).filter((s) => !跑过没(s));
+        if (!本轮.length) break;
+        for (const s of 本轮) {
+          标记已跑(s);
+
+          // 外链脚本(由 Go 侧取回并内联)带来源标签 —— 报错时点名,否则
+          // 页面上脚本一多就只剩下一句"某某不是函数"。
+          let 来源 = "";
+          try { 来源 = s.getAttribute("data-qjsdom-from") || ""; } catch (e) {}
+
+          let src = "";
+          try { src = (s.getAttribute && s.getAttribute("src")) || ""; } catch (e) {}
+
+          const 类型 = 脚本类型(s);
+          const 模块 = 类型 === "module";
+          // 数据块(JSON-LD / JSON / 模板)不是脚本,一律不执行
+          if (!是可执行类型(类型) && !模块) continue;
+          if (模块 && !已提示模块) {
+            已提示模块 = true;
+            if (!src) errs.push("note: 内联 type=module 脚本按普通脚本执行(import 不会解析)");
+          }
+
+          if (src) {
+            // Go 侧已内联的外链脚本没有 src(标签被替换掉了)。走到这里的是
+            // 【document.write 注入的外链脚本】,只能在 JS 侧取回 —— 走的是
+            // 同一条守卫通路(协议白名单 + SSRF 守卫),次数也算进每页上限。
+            if (模块) {
+              errs.push("document.write 注入的 module 脚本未执行(" + src + "): 需要 import 支持");
+              continue;
+            }
+            if (!允许外链) {
+              errs.push("document.write 注入的外链脚本未执行(" + src +
+                "): 外链脚本加载或页面脚本的网络能力已关闭(-no-script-src / -no-js-fetch)");
+              continue;
+            }
+            if (typeof globalThis.__qjsdom_httpFetch !== "function") {
+              errs.push("document.write 注入的外链脚本未执行(" + src + "): 页面脚本的网络能力已关闭");
+              continue;
+            }
+            let r;
+            try { r = JSON.parse(String(__qjsdom_httpFetch(src, "GET"))); } catch (e) { r = { error: String(e) }; }
+            if (!r || r.error) {
+              errs.push("document.write 注入的外链脚本取不到(" + src + "): " + ((r && r.error) || "未知错误"));
+              continue;
+            }
+            try {
+              globalThis.__qjsdom_当前脚本 = s;
+              (0, eval)(String(r.body || ""));
+              ran++;
+            } catch (e) {
+              errs.push(脚本错误信息(e, src));
+            } finally {
+              globalThis.__qjsdom_当前脚本 = null;
+            }
+            continue;
+          }
+
+          let code = "";
+          try { code = s.textContent || ""; } catch (e) { continue; }
+          if (!code.trim()) continue;
+          try {
+            globalThis.__qjsdom_当前脚本 = s; // document.write 靠它知道"写哪儿"
+            (0, eval)(code);
+            ran++;
+          } catch (e) {
+            errs.push(脚本错误信息(e, 来源));
+          } finally {
+            // 跑完就清空:此后(微任务、定时器里)的 document.write 会走
+            // "追加到 body 并记提示"那条明确的路,而不是写进早就跑完的脚本后面。
+            globalThis.__qjsdom_当前脚本 = null;
+          }
         }
       }
+      // 轮数用尽还有没跑的,说明 write 还在往外写脚本 —— 记一条,别静默丢
+      if (Array.from(document.querySelectorAll("script")).filter((s) => !跑过没(s)).length > 0) {
+        errs.push("note: 脚本执行轮数达到上限(" + 脚本轮数上限 + "),document.write 注入的后续脚本未执行");
+      }
+      // scriptTags 取【最终】文档里的数量:write 可能又写进来一批
+      scripts = Array.from(document.querySelectorAll("script"));
 
       // 交给宿主:这次 eval 一返回,微任务队列就会被抽干,之后才轮到阶段二。
       globalThis.__qjsdom_脚本统计 = { ran: ran, errs: errs, scripts: scripts };
@@ -149,6 +245,12 @@
       ran = st.ran || 0;
       errs = st.errs || [];
     }
+    // shim 记下的页面级提示(document.write 在脚本之外被调用等)在【这里】读:
+    // 微任务 —— 以及其中的 document.write —— 是在阶段一的 eval 返回【之后】
+    // 才被宿主抽干执行的,阶段一末尾去读会读空。
+    try {
+      if (Array.isArray(globalThis.__qjsdom_页面提示)) errs = errs.concat(globalThis.__qjsdom_页面提示);
+    } catch (e) {}
 
     // ---- 3. 提取内容(按 mode 分流)----
     //
