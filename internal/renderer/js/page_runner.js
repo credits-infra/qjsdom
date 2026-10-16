@@ -325,10 +325,12 @@
     // HTML 实体解码。getAttribute 不解码,`&amp;` 会原样带出来 —— 链接和图片
     // 都要过这一道,否则带查询串的地址会被当成字面值:实测维基缩略图的
     // `?utm_source=…&amp;utm_campaign=…` 原样进了抓取地址,也原样进了文件名。
+    // 一次扫描表替换,不能写成一条条 .replace() 串起来:那样 `&amp;lt;` 会先被解成
+    // `&lt;`、再被同一条链上的 `&lt;` 规则解成 `<` —— 连解两层。带查询串的地址里
+    // 出现字面量 `&lt;` 是合法的(页面自己转义过一次),多解一层等于改写了地址。
+    const 实体表 = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", "#38": "&" };
     const decodeEntities = (raw) => String(raw || "").trim()
-      .replace(/&amp;/g, "&").replace(/&#38;/g, "&")
-      .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      .replace(/&(amp|lt|gt|quot|#39|#38);/g, (_, 名) => 实体表[名]);
 
     // 链接清理。三件事:
     //  · HTML 实体 —— getAttribute 不解码,&amp; 会原样带出来
