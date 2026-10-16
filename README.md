@@ -1,7 +1,6 @@
 # qjsdom
 
-Read web pages from Go, including content that page JavaScript generates, without
-a browser and without Node or Bun. One static binary, about 80 MB of memory.
+Read web pages from Go, including content that page JavaScript generates, without a browser and without Node or Bun. One static binary, about 80 MB of memory.
 
 Two entry points:
 
@@ -39,10 +38,7 @@ qjsdom -markdown -mode article https://en.wikipedia.org/wiki/Glycolysis
 qjsdom -no-js-fetch -no-script-src https://example.com
 ```
 
-`-mode` picks the extraction strategy. Use `article` for articles and
-documentation, `links` for search results and index pages. Leave it out when you
-are not sure. The default, `all`, returns the whole page and its link list, so it
-loses nothing.
+`-mode` picks the extraction strategy. Use `article` for articles and documentation, `links` for search results and index pages. Leave it out when you are not sure. The default, `all`, returns the whole page and its link list, so it loses nothing.
 
 Flags work in any position, so `qjsdom <url> -json` is fine.
 
@@ -61,14 +57,9 @@ Run `qjsdom -h` for the rest.
 }
 ```
 
-The tool is `fetch_page`. It returns the page text, and when the page has images
-worth sending it returns them as image content blocks. A model that accepts
-images sees the figures directly, so charts and diagrams come through without the
-caller reading anything from disk.
+The tool is `fetch_page`. It returns the page text, and when the page has images worth sending it returns them as image content blocks. A model that accepts images sees the figures directly, so charts and diagrams come through without the caller reading anything from disk.
 
-Pass `format: "markdown"` to get the page as Markdown instead of plain text.
-Headings, lists, links, and tables survive the conversion, and relative links
-become absolute when the page has an http(s) address. The default is `text`.
+Pass `format: "markdown"` to get the page as Markdown instead of plain text. Headings, lists, links, and tables survive the conversion, and relative links become absolute when the page has an http(s) address. The default is `text`.
 
 Environment variables:
 
@@ -93,15 +84,9 @@ Environment variables:
 
 ### URL schemes
 
-Only `http` and `https` are fetchable, and that list is a boundary rather than a
-filter: it cannot develop holes the way an address list does. Set
-`QJSDOM_ALLOW_SCHEMES` to name extra schemes (`file` reads a local file), and the
-server prints a warning at startup when you do. Leaving it empty keeps everything
-else closed.
+Only `http` and `https` are fetchable, and that list is a boundary rather than a filter: it cannot develop holes the way an address list does. Set `QJSDOM_ALLOW_SCHEMES` to name extra schemes (`file` reads a local file), and the server prints a warning at startup when you do. Leaving it empty keeps everything else closed.
 
-The `file` scheme is the one built-in addition. It is off by default because
-enabling it hands the caller a way to read files on the host. A deployment where
-anyone in a chat group can trigger a fetch should leave it off.
+The `file` scheme is the one built-in addition. It is off by default because enabling it hands the caller a way to read files on the host. A deployment where anyone in a chat group can trigger a fetch should leave it off.
 
 ```bash
 # Render a saved page, images and all, with no network access
@@ -110,19 +95,13 @@ QJSDOM_ALLOW_SCHEMES=file qjsdom-mcp
 
 ### Sending the images to a user
 
-An image content block lets the model see an illustration. It does not let your
-program send that illustration to a user, because the bytes never reach the
-filesystem.
+An image content block lets the model see an illustration. It does not let your program send that illustration to a user, because the bytes never reach the filesystem.
 
-Set `QJSDOM_SAVE_IMAGES_DIR` and the server writes each returned image there and
-reports absolute paths in `image_paths`. What you do with those paths is up to
-your client: post them, upload them, or ignore them.
+Set `QJSDOM_SAVE_IMAGES_DIR` and the server writes each returned image there and reports absolute paths in `image_paths`. What you do with those paths is up to your client: post them, upload them, or ignore them.
 
-The server does not tell you how to send a file. That is a platform decision, and
-the right answer differs per client.
+The server does not tell you how to send a file. That is a platform decision, and the right answer differs per client.
 
-The response text ends with a list of the returned images, in the same order as the
-image content blocks:
+The response text ends with a list of the returned images, in the same order as the image content blocks:
 
 ```
 ## 本页图片
@@ -133,121 +112,55 @@ image content blocks:
    未落盘
 ```
 
-An image block carries no name, so this list is the only place that says where an
-image came from. Without it a client can pair images to paths only by position, which
-stops working as soon as one image is dropped or skipped. The file line reads
-`未落盘` when the image was not written to disk, such as when
-`QJSDOM_SAVE_IMAGES_DIR` is unset.
+An image block carries no name, so this list is the only place that says where an image came from. Without it a client can pair images to paths only by position, which stops working as soon as one image is dropped or skipped. The file line reads `未落盘` when the image was not written to disk, such as when `QJSDOM_SAVE_IMAGES_DIR` is unset.
 
-Images come from the content container, not from the whole document. `article`
-mode and `selector` both narrow the collection, so a page header logo or a sidebar
-badge stays out of the list. `all` mode without a selector keeps the whole page and
-with it every image on it. Pass `selector` when a figure is missing from a page
-that has one.
+Images come from the content container, not from the whole document. `article` mode and `selector` both narrow the collection, so a page header logo or a sidebar badge stays out of the list. `all` mode without a selector keeps the whole page and with it every image on it. Pass `selector` when a figure is missing from a page that has one.
 
 ## Scripts on the page
 
-Pages that build their content in JavaScript are common enough that skipping their
-scripts means returning an empty shell. So the scripts run, and they can fetch.
+Pages that build their content in JavaScript are common enough that skipping their scripts means returning an empty shell. So the scripts run, and they can fetch.
 
-`fetch` and `XMLHttpRequest` are real here, but they go through the same door as
-the page fetch itself: the scheme allowlist, the SSRF guard (re-checked on every
-redirect), the size cap, and the timeout. A page's scripts do not get a second
-path into the network, because whatever they can reach is what a page author's
-code can scan. Four limits sit on top: `GET` only (a `POST` from a page would make this machine
-send writes to third parties), 15 requests per page, 1 MB per response, and one
-10-second budget for all of the page's network traffic. That budget covers external
-scripts, `fetch` and `XMLHttpRequest`, and `Image` probes, and its clock starts at
-the first request the page makes rather than at the start of the render, so building
-the DOM does not eat it. Once it runs out, further requests fail and the render
-records why in `scriptErrs`.
+`fetch` and `XMLHttpRequest` are real here, but they go through the same door as the page fetch itself: the scheme allowlist, the SSRF guard (re-checked on every redirect), the size cap, and the timeout. A page's scripts do not get a second path into the network, because whatever they can reach is what a page author's code can scan. Four limits sit on top: `GET` only (a `POST` from a page would make this machine send writes to third parties), 15 requests per page, 1 MB per response, and one 10-second budget for all of the page's network traffic. That budget covers external scripts, `fetch` and `XMLHttpRequest`, and `Image` probes, and its clock starts at the first request the page makes rather than at the start of the render, so building the DOM does not eat it. Once it runs out, further requests fail and the render records why in `scriptErrs`.
 
-Relative URLs resolve the way a browser resolves them: against the document's base
-URL, which is the page address unless the page declares `<base href>`. The first
-`<base href>` in the document wins, and `location.href` still reports the page
-address.
-`Response` carries what scripts actually read: `status`, `ok`, `url`, `headers`,
-`redirected`, `text()`, `json()`, `arrayBuffer()`. Binary bodies are not supported —
-the host bridge returns text, so `arrayBuffer()` gives the UTF-8 bytes of that text
-rather than the original bytes.
+Relative URLs resolve the way a browser resolves them: against the document's base URL, which is the page address unless the page declares `<base href>`. The first `<base href>` in the document wins, and `location.href` still reports the page address. `Response` carries what scripts actually read: `status`, `ok`, `url`, `headers`, `redirected`, `text()`, `json()`, `arrayBuffer()`. Binary bodies are not supported — the host bridge returns text, so `arrayBuffer()` gives the UTF-8 bytes of that text rather than the original bytes.
 
-`<script src>` files are fetched too, then put back inline where they were. Keeping
-the source in place is what preserves execution order; a browser runs external
-scripts in document order, and inlining them at their original position does the
-same thing without a scheduler. `async` and `defer` are not implemented — scripts
-run in document order, and that order is the deterministic one. `type="module"` is
-skipped, since it needs import resolution. A response that is not 2xx, or that
-declares `text/html`, is not run at all: a 404 error page inlined as a script only
-produces a stray syntax error that hides the real reason. At most ten files are
-fetched, at most 512 KB each, and a script past either limit stays where it is with a
-line in `scriptErrs` naming it. A truncated script is skipped for the same reason:
-half a script runs into a syntax error that says nothing about the real cause.
+`<script src>` files are fetched too, then put back inline where they were. Keeping the source in place is what preserves execution order; a browser runs external scripts in document order, and inlining them at their original position does the same thing without a scheduler. `async` and `defer` are not implemented — scripts run in document order, and that order is the deterministic one. `type="module"` is skipped, since it needs import resolution. A response that is not 2xx, or that declares `text/html`, is not run at all: a 404 error page inlined as a script only produces a stray syntax error that hides the real reason. At most ten files are fetched, at most 512 KB each, and a script past either limit stays where it is with a line in `scriptErrs` naming it. A truncated script is skipped for the same reason: half a script runs into a syntax error that says nothing about the real cause.
 
-Scripts run in two passes for one reason. QuickJS drains its microtask queue after
-each evaluation, not during, so a callback queued by `fetch(...).then(...)` would
-run *after* the content had already been extracted — the callback's changes to the
-DOM simply would not be there. The runner therefore executes scripts in one
-evaluation, lets the host drain the queue, and extracts content in the next.
+Scripts run in two passes for one reason. QuickJS drains its microtask queue after each evaluation, not during, so a callback queued by `fetch(...).then(...)` would run *after* the content had already been extracted — the callback's changes to the DOM simply would not be there. The runner therefore executes scripts in one evaluation, lets the host drain the queue, and extracts content in the next.
 
-Each failure carries a reason. When a script cannot be fetched, is not 2xx, or is
-skipped for its type, `scriptErrs` says which script and why. When one throws, the
-entry names the script and the line: `not a function` on its own tells you nothing
-once a page has jQuery plus its own scripts.
+Each failure carries a reason. When a script cannot be fetched, is not 2xx, or is skipped for its type, `scriptErrs` says which script and why. When one throws, the entry names the script and the line: `not a function` on its own tells you nothing once a page has jQuery plus its own scripts.
 
-`document.write` is available, and scripts it writes run. For which globals come from
-the engine, which from the DOM library, and which are shims in this repository, see
-[Architecture](docs/architecture.md#what-is-native-what-is-a-shim).
+`document.write` is available, and scripts it writes run. For which globals come from the engine, which from the DOM library, and which are shims in this repository, see [Architecture](docs/architecture.md#what-is-native-what-is-a-shim).
 
 ## What it will not do
 
-This is not a browser. There is no layout engine, so a page that loads content
-when you scroll, or that measures element geometry, comes back thin. A pure
-client-side single page app renders as an empty shell. Server-rendered apps such
-as Next.js, Nuxt, Astro, and VitePress work, which covers most of what people
-call "a React page."
+This is not a browser. There is no layout engine, so a page that loads content when you scroll, or that measures element geometry, comes back thin. A pure client-side single page app renders as an empty shell. Server-rendered apps such as Next.js, Nuxt, Astro, and VitePress work, which covers most of what people call "a React page."
 
-Scripts run, and `<script src>` files load, so a page that builds its content in
-JavaScript usually comes back with that content. What does not happen is
-interaction: no login, no clicking, no scrolling, and nothing that only appears
-after a person does something.
+Scripts run, and `<script src>` files load, so a page that builds its content in JavaScript usually comes back with that content. What does not happen is interaction: no login, no clicking, no scrolling, and nothing that only appears after a person does something.
 
-`document.write` works, including for the pages that assemble their content with it:
-[quotes.toscrape.com/js/](https://quotes.toscrape.com/js/) returns its quotes, its
-authors, and its tags. What is written lands where the script sits, and scripts
-written that way run, up to three rounds deep.
+`document.write` works, including for the pages that assemble their content with it: [quotes.toscrape.com/js/](https://quotes.toscrape.com/js/) returns its quotes, its authors, and its tags. What is written lands where the script sits, and scripts written that way run, up to three rounds deep.
 
-Two limits come from doing it this way. Each call is parsed on its own, so a tag split
-across two calls — `write("<div>")` then `write("</div>")` — does not survive; the
-parser closes it at the end of the first call. And a write that arrives after parsing
-finished appends to the body instead of clearing the document, with a line in
-`scriptErrs` saying so: the browser wipes the page in that case, which destroys the
-content rather than producing it.
+Two limits come from doing it this way. Each call is parsed on its own, so a tag split across two calls — `write("<div>")` then `write("</div>")` — does not survive; the parser closes it at the end of the first call. And a write that arrives after parsing finished appends to the body instead of clearing the document, with a line in `scriptErrs` saying so: the browser wipes the page in that case, which destroys the content rather than producing it.
 
-`article` mode guesses. It walks a fixed list of likely containers and takes the
-first one with enough text. When it picks wrong, pass `-selector` with the
-container you want. For Wikipedia that is `#mw-content-text`.
+`article` mode guesses. It walks a fixed list of likely containers and takes the first one with enough text. When it picks wrong, pass `-selector` with the container you want. For Wikipedia that is `#mw-content-text`.
 
 ## Docs
 
 - [Design decisions](docs/decisions.md): why qjs and linkedom, why one runtime
-  per page, and the measurements behind each choice
+per page, and the measurements behind each choice
 - [Architecture](docs/architecture.md): how the parts fit together
 
 ## Acknowledgments
 
-[qjs](https://github.com/fastschema/qjs) runs QuickJS in pure Go through Wazero.
-It handles ES2023, which is what makes this approach work at all.
+[qjs](https://github.com/fastschema/qjs) runs QuickJS in pure Go through Wazero. It handles ES2023, which is what makes this approach work at all.
 
-[linkedom](https://github.com/WebReflection/linkedom) supplies the DOM with no
-Node built-in dependencies, so it bundles small enough to embed.
+[linkedom](https://github.com/WebReflection/linkedom) supplies the DOM with no Node built-in dependencies, so it bundles small enough to embed.
 
-The [Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk) handles the MCP
-side.
+The [Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk) handles the MCP side.
 
 ### How this was built
 
-The code and documentation here were written by an AI agent. Saying so outright
-seems more useful than leaving it implied.
+The code and documentation here were written by an AI agent. Saying so outright seems more useful than leaving it implied.
 
 | | |
 | --- | --- |
@@ -255,18 +168,9 @@ seems more useful than leaving it implied.
 | Model | deepseek-v4.1-flash via [OpenCode Zen](https://opencode.ai/zen) |
 | Human | chose the approach, set the constraints, reviewed every change |
 
-The human half of that list is not a formality. The agent wrote that page images
-were not worth returning because a model cannot see them. It can, and the user
-said so. The agent also built an automatic content-type detector for extraction
-when the caller already knows what it wants; the user pointed out that the
-information was never in the page to begin with. Both corrections are the reason
-the current design looks the way it does, and both are recorded in
-[decisions](docs/decisions.md).
+The human half of that list is not a formality. The agent wrote that page images were not worth returning because a model cannot see them. It can, and the user said so. The agent also built an automatic content-type detector for extraction when the caller already knows what it wants; the user pointed out that the information was never in the page to begin with. Both corrections are the reason the current design looks the way it does, and both are recorded in [decisions](docs/decisions.md).
 
-The documentation follows the
-[Google developer documentation style guide](https://developers.google.com/style),
-and the prose got a pass from [humanizer](https://github.com/blader/humanizer) to
-strip the patterns that make writing read as machine-made.
+The documentation follows the [Google developer documentation style guide](https://developers.google.com/style), and the prose got a pass from [humanizer](https://github.com/blader/humanizer) to strip the patterns that make writing read as machine-made.
 
 ## License
 
