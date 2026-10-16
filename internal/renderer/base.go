@@ -11,6 +11,21 @@ import (
 // 而为此写一个完整解析器不值得。
 var 正则base标签 = regexp.MustCompile(`(?is)<base\b([^>]*)>`)
 
+// 注释与脚本体 做标签扫描前先摘掉它们。
+//
+// 为什么必须摘:扫的是原始文本,而注释里或 JS 字符串里的 `<base>` 也是文本。
+// 第四轮交叉评审实测:`<!-- <base href="https://假.example/"> -->` 会被当真标签,
+// 于是整页的相对地址(外链脚本、页面脚本的 fetch、图片)全被改到那个主机上 ——
+// 一句注释就能劫持整页的地址解析。浏览器的解析器不会这么做,我们也不该。
+//
+// 注意:Go 的正则(RE2)不支持反向引用,所以收尾标签只能再写一遍候选名,
+// 不能用 `\1`。配对不严的代价是"少见的畸形嵌套可能多摘一点文本",对这里的用途
+// (只为了不把注释/代码里的 `<base>` 当真元素)可以接受。
+var (
+	正则注释  = regexp.MustCompile(`(?is)<!--.*?-->`)
+	正则脚本体 = regexp.MustCompile(`(?is)<(?:script|style|textarea|title)\b[^>]*>.*?</(?:script|style|textarea|title)\s*>`)
+)
+
 // 有效基准 返回补全相对地址时要用的基地址。
 //
 // 浏览器不是拿文档地址直接当基准的:页面里第一个带 href 的 <base> 会把它顶掉
@@ -45,7 +60,10 @@ func 有效基准(html, pageURL string) string {
 // 抓baseHref 取第一个带 href 的 <base> 的 href 值。href 为空的跳过 —— 规范里
 // 「有 href 属性」才算,而 `<base target="_blank">` 这种没有 href 的不该顶掉基准。
 func 抓baseHref(html string) string {
-	for _, m := range 正则base标签.FindAllStringSubmatch(html, -1) {
+	// 先摘掉注释与脚本体:里面的 `<base>` 只是文本,不是元素。
+	干净 := 正则注释.ReplaceAllString(html, " ")
+	干净 = 正则脚本体.ReplaceAllString(干净, " ")
+	for _, m := range 正则base标签.FindAllStringSubmatch(干净, -1) {
 		if v := strings.TrimSpace(属性值(m[1], "href")); v != "" {
 			return 解实体(v)
 		}
