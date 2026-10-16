@@ -170,7 +170,10 @@ same thing without a scheduler. `async` and `defer` are not implemented — scri
 run in document order, and that order is the deterministic one. `type="module"` is
 skipped, since it needs import resolution. A response that is not 2xx, or that
 declares `text/html`, is not run at all: a 404 error page inlined as a script only
-produces a stray syntax error that hides the real reason.
+produces a stray syntax error that hides the real reason. At most ten files are
+fetched, at most 512 KB each, and a script past either limit stays where it is with a
+line in `scriptErrs` naming it. A truncated script is skipped for the same reason:
+half a script runs into a syntax error that says nothing about the real cause.
 
 Scripts run in two passes for one reason. QuickJS drains its microtask queue after
 each evaluation, not during, so a callback queued by `fetch(...).then(...)` would
