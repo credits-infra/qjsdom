@@ -303,6 +303,44 @@ reason, which is that the script could not be fetched. Non-2xx responses and
 responses declaring `text/html` are now recorded with their status and skipped
 instead of being run.
 
+## Implement the missing layer, not a second DOM
+
+`document.write` is how a whole generation of pages assembled their content:
+[quotes.toscrape.com/js/](https://quotes.toscrape.com/js/) loads jQuery and then writes
+each quote into the document, and without the method it returns a shell while every
+script reports success. linkedom has no `write`, `writeln`, `open`, or `close`, so the
+four have to come from somewhere.
+
+They come from as little new code as possible. Parsing the written HTML is linkedom's
+own `innerHTML` path — writing a parser again is the single worst thing to do here,
+because entities, comments, table fixups, and error recovery are all traps, and the
+library already has one. Node insertion uses `parentNode`, `firstChild`,
+`nextSibling`, and `insertBefore`. What we add is the method layer and the position
+decision, nothing else. The same rule fixed the taxonomy in `architecture.md`: a
+missing API belongs to whichever layer owns it, and patching a different layer leaves
+the real cause in place.
+
+Position is the decision with content consequences: written nodes go after the script
+that wrote them, which is where a browser puts them and where these pages expect their
+content to appear. Writes are inserted before a stable reference node rather than
+always immediately after the script — the obvious `insertAdjacentHTML("afterend")`
+reverses the order of the second write, because the second insertion lands before the
+first.
+
+Two behaviours deliberately differ from a browser. Multiple calls cannot build one tag,
+since each call is parsed independently; a browser streams them through one parser. And
+a write after parsing finished appends to the body instead of wiping the document —
+that is what a browser does, and it destroys the content a scraper came for. Both
+deviations are documented, and the second one leaves a line in `scriptErrs` instead of
+changing the contract silently.
+
+Scripts written by `document.write` run, in up to three rounds: a browser runs them,
+and a page that writes a script to write its content would otherwise lose that content.
+The round limit exists because a script can write a script that writes a script, and
+nothing bounds that but us. An external script discovered this way is fetched through
+the same guard as everything else, since the Go-side inlining happened before it
+existed.
+
 ## Guard against SSRF
 
 This component ends up exposed to a chat group where anyone can trigger a fetch.

@@ -183,6 +183,10 @@ skipped for its type, `scriptErrs` says which script and why. When one throws, t
 entry names the script and the line: `not a function` on its own tells you nothing
 once a page has jQuery plus its own scripts.
 
+`document.write` is available, and scripts it writes run. For which globals come from
+the engine, which from the DOM library, and which are shims in this repository, see
+[Architecture](docs/architecture.md#what-is-native-what-is-a-shim).
+
 ## What it will not do
 
 This is not a browser. There is no layout engine, so a page that loads content
@@ -196,11 +200,17 @@ JavaScript usually comes back with that content. What does not happen is
 interaction: no login, no clicking, no scrolling, and nothing that only appears
 after a person does something.
 
-`document.write` is not implemented — linkedom has no such method — so a page that
-assembles its content that way comes back without that content. It fails at the call
-site with a bare `not a function`, which is exactly what the line number in
-`scriptErrs` exists to point at. [quotes.toscrape.com/js/](https://quotes.toscrape.com/js/)
-is a live example: its jQuery loads and runs, and the quotes never appear.
+`document.write` works, including for the pages that assemble their content with it:
+[quotes.toscrape.com/js/](https://quotes.toscrape.com/js/) returns its quotes, its
+authors, and its tags. What is written lands where the script sits, and scripts
+written that way run, up to three rounds deep.
+
+Two limits come from doing it this way. Each call is parsed on its own, so a tag split
+across two calls — `write("<div>")` then `write("</div>")` — does not survive; the
+parser closes it at the end of the first call. And a write that arrives after parsing
+finished appends to the body instead of clearing the document, with a line in
+`scriptErrs` saying so: the browser wipes the page in that case, which destroys the
+content rather than producing it.
 
 `article` mode guesses. It walks a fixed list of likely containers and takes the
 first one with enough text. When it picks wrong, pass `-selector` with the
