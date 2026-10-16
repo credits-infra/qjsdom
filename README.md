@@ -144,6 +144,19 @@ Two limits come from doing it this way. Each call is parsed on its own, so a tag
 
 `article` mode guesses. It walks a fixed list of likely containers and takes the first one with enough text. When it picks wrong, pass `-selector` with the container you want. For Wikipedia that is `#mw-content-text`.
 
+## How it compares
+
+The alternatives we measured, on the same pages on the same machine:
+
+| Approach | Runs page scripts | Page scripts reach the network | Runtime to install | Install size | Peak memory on a small page |
+| --- | --- | --- | --- | --- | --- |
+| qjsdom | yes | yes | none, one binary | 15 MB | 89 MB |
+| httpx + markdownify | no | no | Python | 15 MB plus Python | 50 MB |
+| bun + happy-dom | yes | no | Bun | 85 MB plus 59 MB | 56 MB |
+| Playwright + chromium | yes | yes | none | 389 MB | 595 MB |
+
+qjsdom costs about 1.2 s and 89 MB of fixed startup and uses 4.7-6.7x less memory than chromium on the pages we measured, which is less than we hoped for and more than nothing on a 1.8 GB machine. bun with happy-dom is 2-5x faster as long as the page does not need to fetch anything from inside a script. See [docs/comparison.md](docs/comparison.md) for the full tables, the method, and the traps we hit on the way.
+
 ## Docs
 
 - [Design decisions](docs/decisions.md): why qjs and linkedom, why one runtime

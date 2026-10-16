@@ -1,5 +1,7 @@
 # Design decisions
 
+[comparison.md](comparison.md) holds the head-to-head measurement of qjsdom against the four approaches below, including chromium's 558 to 707 MB peak and our own 1.2 s fixed startup.
+
 Every choice here came out of a measurement, and several of them went against what I expected. Where a decision replaced an earlier attempt, the failed attempt is still in here, because the reason it failed is the reason the current design looks the way it does.
 
 Some of these took an afternoon. A couple took a week of trying the wrong thing first. Every measurement below comes from a 2-core VPS with 1.8 GB of memory, which is why the numbers look small.
