@@ -452,6 +452,24 @@ completion.
 depend on the difference: one is the page the user is on, the other is where assets
 come from.
 
+## Bound the time a page's network may take
+
+A request count is not a time bound. Fifteen page-script requests each waiting out
+its own ten-second timeout is two and a half minutes of wall clock for one page, and
+the count cap cannot tell fifteen fast requests from fifteen that hang. Measured
+worst case before this change: about 150 seconds, serialized, with nothing the
+caller could do about it.
+
+So the page's own scripts get a total wall-clock budget for the network, measured
+from the start of the render. Ten seconds by default; `QJSDOM_JS_FETCH_BUDGET` (or
+`-js-fetch-budget`) changes it. A request that arrives after the budget is spent
+fails immediately with a message naming the budget, and that message lands in
+`scriptErrs` — the page still renders, and the caller can see the network was cut
+short instead of wondering why content is missing.
+
+Time-based rather than another count, deliberately: slow pages are the failure
+mode, while a page making fifteen fast requests is fine and should get all fifteen.
+
 ## Paths not taken
 
 **markitdown** converts many formats to Markdown and looks like a natural fit. It

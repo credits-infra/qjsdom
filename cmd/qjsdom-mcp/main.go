@@ -67,6 +67,8 @@ type config struct {
 	jsFetch bool
 	// scriptSrc 是否加载 <script src> 外部脚本。
 	scriptSrc bool
+	// jsFetchBudget 页面脚本联网的总时间预算(零值 = 渲染器默认 10s)。
+	jsFetchBudget time.Duration
 }
 
 func loadConfig() config {
@@ -82,6 +84,7 @@ func loadConfig() config {
 		maxImageByte:   envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
 		jsFetch:        envBool("QJSDOM_JS_FETCH", true),
 		scriptSrc:      envBool("QJSDOM_SCRIPT_SRC", true),
+		jsFetchBudget:  envDur("QJSDOM_JS_FETCH_BUDGET", 0),
 		saveImagesDir:  envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
 		debug:          os.Getenv("QJSDOM_DEBUG") == "1",
 		allowSchemes:   fetcher.SplitSchemes(envStr("QJSDOM_ALLOW_SCHEMES", "")),
@@ -247,6 +250,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 		// 才把正文渲染出来,关掉就只能拿到空壳。可以用 env 关。
 		DisableJSFetch:   !cfg.jsFetch,
 		DisableScriptSrc: !cfg.scriptSrc,
+		JSFetchBudget:    cfg.jsFetchBudget,
 		FetchOptions:     fo,
 	})
 	if err != nil {

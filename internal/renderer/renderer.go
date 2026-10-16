@@ -118,6 +118,11 @@ type Options struct {
 	DisableScriptSrc bool
 	// FetchOptions 供图片探测使用的网络参数。
 	FetchOptions fetcher.Options
+	// JSFetchBudget 页面脚本联网的总时间预算(零值 = 10 秒)。
+	//
+	// 从渲染开始计时,而不是从第一次请求算起。用尽之后后续请求直接失败,并在
+	// scriptErrs 里说明原因 —— 宁可少取且说清为什么,也不要为了取全让整页卡住。
+	JSFetchBudget time.Duration
 
 	// DownloadImages 是否把页面里的 <img> 下载到 ImagesDir。
 	//
@@ -171,6 +176,10 @@ const (
 	// 页面脚本单次响应的字节上限。这类请求取的多是 JSON,不需要页面级的 4MB 配额 ——
 	// 一页 15 次 × 4MB 就是 60MB,那才是真会打爆内存的地方。
 	maxJSFetchBytes = 1 << 20 // 1MB
+	// 页面脚本联网的总时间预算(零值走这里,可用 Options.JSFetchBudget 覆盖)。
+	// 次数上限管"多少次",这一道管"多久":十五次各自等满超时同样能把整页拖住,
+	// 实测最坏情况约 150 秒且串行不可打断。
+	maxJSFetchTotal = 10 * time.Second
 )
 
 const EngineVersion = "qjsdom/0.1 (qjs + linkedom, CGO-free)"
@@ -467,6 +476,12 @@ func registerJSFetch(ctx *qjs.Context, 基准 string, opt Options) string {
 		base, _ = url.Parse(基准)
 	}
 
+	预算 := opt.JSFetchBudget
+	if 预算 <= 0 {
+		预算 = maxJSFetchTotal
+	}
+	起点 := time.Now()
+
 	剩余 := maxJSFetchPerPage
 	ctx.SetFunc("__qjsdom_httpFetch", func(this *qjs.This) (*qjs.Value, error) {
 		c := this.Context()
@@ -485,6 +500,12 @@ func registerJSFetch(ctx *qjs.Context, 基准 string, opt Options) string {
 		if 剩余 <= 0 {
 			return c.NewString(错误JSON(fmt.Sprintf(
 				"本页页面脚本发起的请求已达上限(%d),后续请求不再转发", maxJSFetchPerPage))), nil
+		}
+		// 时间预算:次数上限管"多少次",这一道管"多久" —— 两者都要。
+		if 用时 := time.Since(起点); 用时 >= 预算 {
+			return c.NewString(错误JSON(fmt.Sprintf(
+				"本页页面脚本的网络时间预算已用尽(%s):为免整页被拖住,后续请求不再转发",
+				预算))), nil
 		}
 		剩余--
 

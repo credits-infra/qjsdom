@@ -89,6 +89,7 @@ Environment variables:
 | `QJSDOM_MAX_CONCURRENCY` | `2` | Page requests handled at once. Further requests queue, up to twice this many, then get a busy error |
 | `QJSDOM_JS_FETCH` | on | Let the page's own scripts make requests. `0` turns `fetch` and `XMLHttpRequest` off |
 | `QJSDOM_SCRIPT_SRC` | on | Load `<script src>` files and run them where they sit. `0` leaves them alone |
+| `QJSDOM_JS_FETCH_BUDGET` | `10s` | Total network time for the page's own scripts, measured from the start of the render. `0` uses the default |
 
 ### URL schemes
 
@@ -153,9 +154,11 @@ scripts means returning an empty shell. So the scripts run, and they can fetch.
 the page fetch itself: the scheme allowlist, the SSRF guard (re-checked on every
 redirect), the size cap, and the timeout. A page's scripts do not get a second
 path into the network, because whatever they can reach is what a page author's
-code can scan. Three limits sit on top: `GET` only (a `POST` from a page would make
-this machine send writes to third parties), 15 requests per page, and 1 MB per
-response.
+code can scan. Four limits sit on top: `GET` only (a `POST` from a page would make
+this machine send writes to third parties), 15 requests per page, 1 MB per
+response, and 10 seconds of network time for the page's own scripts. The time
+budget is measured from the start of the render, and a request that arrives after
+it runs out fails with a reason instead of quietly going missing.
 
 Relative URLs resolve the way a browser resolves them: against the document's base
 URL, which is the page address unless the page declares `<base href>`. The first

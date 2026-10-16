@@ -25,16 +25,18 @@ import (
 
 func main() {
 	var (
-		modeFlag     = flag.String("mode", "all", "提取策略: all(整页,默认) / article(正文) / links(链接列表)")
-		selector     = flag.String("selector", "", "正文容器 CSS 选择器(对 all/article 生效)")
-		maxLen       = flag.Int("max", 0, "正文截断长度,0=不截断")
-		asJSON       = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
-		markdown     = flag.Bool("markdown", false, "输出 Markdown(保留标题/列表/表格等结构)")
-		filePath     = flag.String("file", "", "渲染本地 HTML 文件,不联网")
-		noScripts    = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
-		noImages     = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
-		noJSFetch    = flag.Bool("no-js-fetch", false, "不让页面脚本联网(关掉 fetch / XMLHttpRequest)")
-		noScriptSrc  = flag.Bool("no-script-src", false, "不加载 <script src> 外部脚本")
+		modeFlag    = flag.String("mode", "all", "提取策略: all(整页,默认) / article(正文) / links(链接列表)")
+		selector    = flag.String("selector", "", "正文容器 CSS 选择器(对 all/article 生效)")
+		maxLen      = flag.Int("max", 0, "正文截断长度,0=不截断")
+		asJSON      = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
+		markdown    = flag.Bool("markdown", false, "输出 Markdown(保留标题/列表/表格等结构)")
+		filePath    = flag.String("file", "", "渲染本地 HTML 文件,不联网")
+		noScripts   = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
+		noImages    = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
+		noJSFetch   = flag.Bool("no-js-fetch", false, "不让页面脚本联网(关掉 fetch / XMLHttpRequest)")
+		noScriptSrc = flag.Bool("no-script-src", false, "不加载 <script src> 外部脚本")
+		jsBudget    = flag.Duration("js-fetch-budget", 0,
+			"页面脚本联网的总时间预算(默认 10s;0 = 用默认值)")
 		dlImages     = flag.Bool("download-images", false, "下载页面图片到 -images-dir(交给模型看)")
 		imgDir       = flag.String("images-dir", "", "图片保存目录(配合 -download-images)")
 		maxImages    = flag.Int("max-images", 20, "最多下载几张图片")
@@ -145,6 +147,7 @@ func main() {
 		DisableImages:    *noImages,
 		DisableJSFetch:   *noJSFetch,
 		DisableScriptSrc: *noScriptSrc,
+		JSFetchBudget:    *jsBudget,
 		FetchOptions:     fetchOpts,
 		DownloadImages:   *dlImages,
 		ImagesDir:        *imgDir,
@@ -250,17 +253,18 @@ func shorten(s string, n int) string {
 // 它的值还是位置参数。
 func reorderArgs(args []string) []string {
 	valueFlags := map[string]bool{
-		"-mode":          true,
-		"-selector":      true,
-		"-max":           true,
-		"-file":          true,
-		"-timeout":       true,
-		"-images-dir":    true,
-		"-max-images":    true,
-		"-allow-schemes": true,
-		"-cache-dir":     true,
-		"-cache-ttl":     true,
-		"-cache-max":     true,
+		"-mode":            true,
+		"-selector":        true,
+		"-max":             true,
+		"-file":            true,
+		"-timeout":         true,
+		"-images-dir":      true,
+		"-max-images":      true,
+		"-allow-schemes":   true,
+		"-cache-dir":       true,
+		"-cache-ttl":       true,
+		"-cache-max":       true,
+		"-js-fetch-budget": true,
 	}
 
 	var flags, positional []string
