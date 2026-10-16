@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"qjsdom/internal/renderer"
 )
 
 // TestImageContentDataIsRawBytes 钉住「ImageContent.Data 必须是原始字节」。
@@ -127,5 +129,49 @@ func TestSaveImageFileNamesByURLHash(t *testing.T) {
 	p3, _ := saveImageFile(dir, "https://example.com/a.png", "png", body)
 	if p3 != p1 {
 		t.Errorf("同一 URL 应当稳定落到同一路径: %s vs %s", p1, p3)
+	}
+}
+
+// TestComposeTextSwitchesBodyByFormat 钉住 format 参数的效果:
+// markdown 用 Markdown 正文,text 用纯文本正文,两者都不影响标题/清单。
+func TestComposeTextSwitchesBodyByFormat(t *testing.T) {
+	res := &renderer.Result{
+		Title:    "页面标题",
+		Text:     "纯文本正文",
+		Markdown: "# 一级标题\n\n- 列表项",
+		Mode:     "article",
+		Links:    []renderer.Link{{Title: "示例", URL: "https://example.com"}},
+	}
+	out := fetchOut{}
+
+	纯 := composeText(res, out, nil, false)
+	if !strings.Contains(纯, "纯文本正文") || strings.Contains(纯, "# 一级标题") {
+		t.Errorf("text 格式应当用纯文本正文:\n%s", 纯)
+	}
+	md := composeText(res, out, nil, true)
+	if !strings.Contains(md, "# 一级标题") || strings.Contains(md, "纯文本正文") {
+		t.Errorf("markdown 格式应当用 Markdown 正文:\n%s", md)
+	}
+	// 两种格式下标题行与链接清单都在
+	for _, 输出 := range []string{纯, md} {
+		if !strings.Contains(输出, "# 页面标题") {
+			t.Errorf("标题行丢了:\n%s", 输出)
+		}
+		if !strings.Contains(输出, "[示例](https://example.com)") {
+			t.Errorf("链接清单丢了:\n%s", 输出)
+		}
+	}
+}
+
+// TestComposeTextSaysWhenMarkdownMissing 钉住降级时明说:
+// 要了 Markdown 却拿不到(转换失败),不能让它看起来像转换成功。
+func TestComposeTextSaysWhenMarkdownMissing(t *testing.T) {
+	res := &renderer.Result{Title: "T", Text: "纯文本正文", Mode: "article"}
+	got := composeText(res, fetchOut{}, nil, true)
+	if !strings.Contains(got, "Markdown 转换未产出内容") {
+		t.Errorf("没有说明已降级:\n%s", got)
+	}
+	if !strings.Contains(got, "纯文本正文") {
+		t.Errorf("降级后应当仍给纯文本:\n%s", got)
 	}
 }

@@ -90,6 +90,7 @@ type fetchArgs struct {
 	Selector string `json:"selector,omitempty" jsonschema:"CSS selector naming the content container directly. Use it when article mode picks the wrong container. For Wikipedia, #mw-content-text."`
 	MaxLen   int    `json:"max_len,omitempty" jsonschema:"Truncate the returned text at this many characters. Counted in characters, so multi-byte text is never cut mid-character. 0 uses the server default."`
 	Images   *bool  `json:"images,omitempty" jsonschema:"Return the page's images as image content blocks so the model can see them. Defaults to true. Small icons are filtered out automatically."`
+	Format   string `json:"format,omitempty" jsonschema:"Output format of the page text. markdown keeps headings, lists, links, and tables; text (default) returns plain text. Unknown values fall back to text."`
 }
 
 // fetchOut 是返回给模型的结构化摘要(图片另外以内容块返回)。
@@ -220,12 +221,18 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 	if maxText <= 0 {
 		maxText = cfg.maxText
 	}
+	// format 由调用方指定:markdown 保留结构,text(默认)是纯文本。
+	// 未知值回落到 text —— 与 mode 的既有约定一致(参数写错宁可给个
+	// 不理想的结果,也不要什么都不返回)。
+	要Markdown := strings.EqualFold(strings.TrimSpace(args.Format), "markdown")
+
 	// 这里先让渲染器把图片 URL 收集出来,图片字节我们自己在第 3 步取,
 	// 因为 MCP 需要 base64 内容块而不是本地文件。
 	res, err := renderer.Render(html, url, renderer.Options{
 		Mode:          mode,
 		Selector:      args.Selector,
 		MaxTextLen:    maxText,
+		Markdown:      要Markdown,
 		RunScripts:    true,
 		DisableImages: true, // 页面脚本的 Image 探测对 MCP 无意义,省掉网络往返
 		FetchOptions:  fo,
@@ -266,7 +273,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 	}
 
 	// 文本要在收完路径之后再拼,因为落盘的图片需要在这里告诉模型怎么发出去
-	content := []mcp.Content{&mcp.TextContent{Text: composeText(res, out, pickedImgs)}}
+	content := []mcp.Content{&mcp.TextContent{Text: composeText(res, out, pickedImgs, 要Markdown)}}
 	content = append(content, contentImgs...)
 
 	return &mcp.CallToolResult{Content: content}, out, nil
@@ -453,7 +460,7 @@ func shortenURL(u string) string {
 }
 
 // composeText 把正文与元信息拼成给模型看的文本。
-func composeText(res *renderer.Result, out fetchOut, imgs []pickedImage) string {
+func composeText(res *renderer.Result, out fetchOut, imgs []pickedImage, markdown bool) string {
 	var b strings.Builder
 
 	if res.Title != "" {
@@ -466,7 +473,18 @@ func composeText(res *renderer.Result, out fetchOut, imgs []pickedImage) string 
 		b.WriteString("> 注意:DOM 解析失败,以下内容来自降级提取(仅去标签的纯文本)。\n\n")
 	}
 
-	b.WriteString(res.Text)
+	// 正文:调用方要 Markdown 就给 Markdown(结构保留在 headings/列表/表格里),
+	// 否则给纯文本。标题行、链接清单、图片清单两种格式下都一样 —— 它们本来就
+	// 是 Markdown 形状的。
+	body := res.Text
+	if markdown && strings.TrimSpace(res.Markdown) != "" {
+		body = res.Markdown
+	} else if markdown {
+		// 要了 Markdown 却拿不到(转换失败):明说,别让调用方以为这就是
+		// 转换后的结果 —— 它退化成了纯文本。
+		b.WriteString("> 注意:Markdown 转换未产出内容,以下为纯文本。\n\n")
+	}
+	b.WriteString(body)
 
 	// 链接模式已经把链接写进正文了,其它模式附上链接列表
 	if res.Mode != string(renderer.ModeLinks) && len(res.Links) > 0 {
