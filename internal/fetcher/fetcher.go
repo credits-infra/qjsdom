@@ -54,6 +54,29 @@ func SplitSchemes(s string) []string {
 	return out
 }
 
+// 协议未放行 是统一的拒绝理由:入口之间不该各写一套措辞。
+func 协议未放行(scheme string) error {
+	return fmt.Errorf(
+		"协议 %q 未放行:默认只允许 http 与 https。"+
+			"确需其它协议(如 file)必须在配置里显式打开,默认禁止。", scheme)
+}
+
+// CheckScheme 在真正发起请求之前检查 URL 的协议是否放行。
+//
+// 给调用方(Fetch 自己、以及 MCP 这类入口)复用同一条规则。为什么要暴露:
+// MCP 曾经自己写死"只支持 http/https",于是 QJSDOM_ALLOW_SCHEMES 在那里
+// 形同虚设 —— 配置说放行了 file,入口却在更早的地方拦掉。规则只该有一份。
+func CheckScheme(rawURL string, allowSchemes []string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("URL 解析失败: %w", err)
+	}
+	if !schemeAllowed(u.Scheme, allowSchemes) {
+		return 协议未放行(u.Scheme)
+	}
+	return nil
+}
+
 // schemeAllowed 判断协议是否放行。http/https 恒定放行,其余要看显式配置。
 //
 // 注意顺序:先判协议、再判主机名 —— file:// 没有主机名,反过来的话
@@ -111,10 +134,8 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("URL 解析失败: %w", err)
 	}
-	if !schemeAllowed(u.Scheme, opt.AllowSchemes) {
-		return nil, fmt.Errorf(
-			"协议 %q 未放行:默认只允许 http 与 https。"+
-				"确需其它协议(如 file)必须在配置里显式打开,默认禁止。", u.Scheme)
+	if err := CheckScheme(rawURL, opt.AllowSchemes); err != nil {
+		return nil, err
 	}
 	if u.Scheme == "file" {
 		return fetchLocalFile(u, opt)

@@ -180,8 +180,10 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 	if url == "" {
 		return errResult("url 参数为空"), out, nil
 	}
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return errResult("只支持 http/https URL,收到: " + url), out, nil
+	if err := fetcher.CheckScheme(url, cfg.allowSchemes); err != nil {
+		// 走 fetcher 的同一条规则:入口自己写死"只支持 http/https"会让
+		// QJSDOM_ALLOW_SCHEMES 在这里形同虚设。
+		return errResult(err.Error()), out, nil
 	}
 
 	mode := renderer.ParseMode(args.Mode)
