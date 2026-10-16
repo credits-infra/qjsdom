@@ -33,9 +33,12 @@ const (
 
 // 展开外部脚本 把所有能取到的 <script src> 替换成内联源码,返回新 HTML 与提示。
 //
+// 传进来的 基准 是"相对地址相对谁",可能被页面里的 <base href> 顶掉 ——
+// 不是文档地址(见 有效基准)。
+//
 // 取不到的保持原样(原样意味着 runner 会跳过它,与改造前的行为一致),
 // 并在提示里说明原因 —— 失败必须带原因,否则"这个页面脚本没跑"没法查。
-func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
+func 展开外部脚本(html, 基准 string, opt Options) (string, []string) {
 	// ⚠️ 早退必须用同一个正则(它是 (?is) 的),不能用 strings.Contains(html, "<script"):
 	// HTML 解析器对标签名不区分大小写,而小写包含判断会让写成 <SCRIPT src=...> /
 	// <ScRiPt src=...> 的页面【整个外链脚本能力静默失效】—— 既不内联、连一条 note 都没有。
@@ -48,8 +51,8 @@ func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
 
 	var notes []string
 	var base *url.URL
-	if pageURL != "" {
-		base, _ = url.Parse(pageURL)
+	if 基准 != "" {
+		base, _ = url.Parse(基准)
 	}
 
 	fo := opt.FetchOptions

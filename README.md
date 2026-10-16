@@ -157,7 +157,10 @@ code can scan. Three limits sit on top: `GET` only (a `POST` from a page would m
 this machine send writes to third parties), 15 requests per page, and 1 MB per
 response.
 
-Relative URLs resolve against the page address, the way a browser does it.
+Relative URLs resolve the way a browser resolves them: against the document's base
+URL, which is the page address unless the page declares `<base href>`. The first
+`<base href>` in the document wins, and `location.href` still reports the page
+address.
 `Response` carries what scripts actually read: `status`, `ok`, `url`, `headers`,
 `redirected`, `text()`, `json()`, `arrayBuffer()`. Binary bodies are not supported —
 the host bridge returns text, so `arrayBuffer()` gives the UTF-8 bytes of that text

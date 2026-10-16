@@ -181,6 +181,10 @@ const EngineVersion = "qjsdom/0.1 (qjs + linkedom, CGO-free)"
 func Render(html, pageURL string, opt Options) (*Result, error) {
 	start := time.Now()
 
+	// 补全相对地址用的基准:页面里第一个 <base href> 会顶掉文档地址(浏览器行为)。
+	// 文档地址本身仍然交给 location.href,两者不能混。
+	基准 := 有效基准(html, pageURL)
+
 	rt, err := qjs.New()
 	if err != nil {
 		return nil, fmt.Errorf("qjs 运行时启动失败: %w", err)
@@ -192,20 +196,20 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	// 注册宿主网络能力。必须在 eval image_fetch.js 之前 ——
 	// 那个脚本靠 typeof __qjsdom_imageProbe 判断网络层是否可用。
 	if !opt.DisableImages {
-		registerImageProbe(ctx, pageURL, opt)
+		registerImageProbe(ctx, 基准, opt)
 	}
 
 	// 外链脚本先取回来内联,再交给 runner —— 顺序就是源码里的顺序。
 	var 脚本提示 []string
 	if !opt.DisableScriptSrc {
-		html, 脚本提示 = 展开外部脚本(html, pageURL, opt)
+		html, 脚本提示 = 展开外部脚本(html, 基准, opt)
 	}
 
 	// 页面脚本的网络能力(globalThis.fetch / XMLHttpRequest)。在 host_shims
 	// 之后注入 —— shim 里用到 TextEncoder(host_shims 提供)。
 	var 注入提示 string
 	if !opt.DisableJSFetch {
-		注入提示 = registerJSFetch(ctx, pageURL, opt)
+		注入提示 = registerJSFetch(ctx, 基准, opt)
 	}
 
 	if _, err := ctx.Eval("host_shims.js", qjs.Code(hostShims)); err != nil {
@@ -234,13 +238,13 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	// Eval 返回之后】才执行。若抽取和脚本挤在一次 eval 里,回调改到的 DOM
 	// 永远进不了结果(实测过:then 里写入的文本,正文里还是旧内容)。
 	// 所以:阶段一跑脚本 → Eval 返回 → 宿主抽微任务 → 阶段二抽取。
-	if v, err := ctx.Eval("page_runner.js", qjs.Code(buildRunner(html, pageURL, opt, "scripts"))); err != nil {
+	if v, err := ctx.Eval("page_runner.js", qjs.Code(buildRunner(html, pageURL, 基准, opt, "scripts"))); err != nil {
 		return nil, fmt.Errorf("页面脚本阶段失败: %w", err)
 	} else {
 		v.Free()
 	}
 
-	v, err := ctx.Eval("page_runner.js", qjs.Code(buildRunner(html, pageURL, opt, "extract")))
+	v, err := ctx.Eval("page_runner.js", qjs.Code(buildRunner(html, pageURL, 基准, opt, "extract")))
 	if err != nil {
 		return nil, fmt.Errorf("页面处理失败: %w", err)
 	}
@@ -271,7 +275,7 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 
 	// Markdown 与纯文本取同一份内容(同一个正文容器),截断也走同一套字符口径。
 	if opt.Markdown {
-		md, err := 转Markdown(&out, pageURL)
+		md, err := 转Markdown(&out, 基准)
 		if err != nil {
 			// 转换失败不该让整次渲染失败:纯文本还在,调用方拿到的仍是有用的结果。
 			out.ScriptErrs = append(out.ScriptErrs, fmt.Sprintf("note: Markdown 转换失败,已退回纯文本: %v", err))
@@ -286,7 +290,7 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 
 	// 按需下载页面图片 —— 图片内容是要交给模型看的产出
 	if opt.DownloadImages {
-		downloadPageImages(&out, pageURL, opt)
+		downloadPageImages(&out, 基准, opt)
 	}
 
 	return &out, nil
@@ -295,7 +299,7 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 // downloadPageImages 把页面里的 <img> 下载到 opt.ImagesDir。
 //
 // 单张失败不影响其它图片,更不影响正文 —— 结果里带 Error 字段即可。
-func downloadPageImages(out *Result, pageURL string, opt Options) {
+func downloadPageImages(out *Result, 基准 string, opt Options) {
 	lim := opt.ImageLimits
 	if lim.MaxImages <= 0 {
 		lim = fetcher.DefaultDownloadLimits()
@@ -306,8 +310,8 @@ func downloadPageImages(out *Result, pageURL string, opt Options) {
 	}
 
 	var base *url.URL
-	if pageURL != "" {
-		base, _ = url.Parse(pageURL)
+	if 基准 != "" {
+		base, _ = url.Parse(基准)
 	}
 
 	seen := make(map[string]bool)
@@ -336,9 +340,12 @@ func downloadPageImages(out *Result, pageURL string, opt Options) {
 
 // buildRunner 把三个占位符替换为 JSON 字面量。
 // 用 JSON 编码而不是裸字符串拼接 —— HTML 里任何引号/反斜杠/换行都会被正确转义。
-func buildRunner(html, pageURL string, opt Options, phase string) string {
+func buildRunner(html, pageURL, 基准 string, opt Options, phase string) string {
 	htmlLit, _ := json.Marshal(html)
 	urlLit, _ := json.Marshal(pageURL)
+	// 基准与文档地址是两个东西:前者给相对地址补全用(可能被 <base href> 顶掉),
+	// 后者就是 location.href。浏览器也是这么分的。
+	baseLit, _ := json.Marshal(基准)
 	selLit, _ := json.Marshal(opt.Selector)
 
 	mode := opt.Mode
@@ -365,6 +372,7 @@ func buildRunner(html, pageURL string, opt Options, phase string) string {
 	s = strings.ReplaceAll(s, "__NEED_HTML__", needHTMLLit)
 	s = strings.ReplaceAll(s, "__HTML__", string(htmlLit))
 	s = strings.ReplaceAll(s, "__URL__", string(urlLit))
+	s = strings.ReplaceAll(s, "__BASE__", string(baseLit))
 	s = strings.ReplaceAll(s, "__SELECTOR__", string(selLit))
 	s = strings.ReplaceAll(s, "__MODE__", string(modeLit))
 	// 阶段:scripts(解析 + 跑脚本)/ extract(抽取)。见 RunPage 里的两阶段说明。
@@ -389,7 +397,7 @@ func buildRunner(html, pageURL string, opt Options, phase string) string {
 //
 // JS 侧拿到的是 JSON 字符串(而不是对象)—— 避免在两种运行时之间
 // 传递复杂对象,也让失败情况能统一用 {ok:false,error:...} 表达。
-func registerImageProbe(ctx *qjs.Context, pageURL string, opt Options) {
+func registerImageProbe(ctx *qjs.Context, 基准 string, opt Options) {
 	fo := opt.FetchOptions
 	if fo.UserAgent == "" {
 		fo = fetcher.DefaultOptions()
@@ -400,8 +408,8 @@ func registerImageProbe(ctx *qjs.Context, pageURL string, opt Options) {
 	}
 
 	var base *url.URL
-	if pageURL != "" {
-		base, _ = url.Parse(pageURL)
+	if 基准 != "" {
+		base, _ = url.Parse(基准)
 	}
 
 	ctx.SetFunc("__qjsdom_imageProbe", func(this *qjs.This) (*qjs.Value, error) {
@@ -441,7 +449,7 @@ func registerImageProbe(ctx *qjs.Context, pageURL string, opt Options) {
 //   - 单次响应字节上限 —— 页面脚本取的多是 JSON,不需要 4MB 的页面级配额。
 //
 // 返回值为非空时表示有需要注意的情况(shim 注入失败),由调用方记进 scriptErrs。
-func registerJSFetch(ctx *qjs.Context, pageURL string, opt Options) string {
+func registerJSFetch(ctx *qjs.Context, 基准 string, opt Options) string {
 	fo := opt.FetchOptions
 	if fo.UserAgent == "" {
 		fo = fetcher.DefaultOptions()
@@ -455,8 +463,8 @@ func registerJSFetch(ctx *qjs.Context, pageURL string, opt Options) string {
 	}
 
 	var base *url.URL
-	if pageURL != "" {
-		base, _ = url.Parse(pageURL)
+	if 基准 != "" {
+		base, _ = url.Parse(基准)
 	}
 
 	剩余 := maxJSFetchPerPage

@@ -1,5 +1,5 @@
 // page_runner.js —— 在 qjs 里解析页面、执行页面脚本、提取正文。
-// 由 Go 侧把 __HTML__ / __URL__ / __SELECTOR__ 三个占位符替换为 JSON 字面量后注入。
+// 由 Go 侧把 __HTML__ / __URL__ / __BASE__ / __SELECTOR__ 等占位符替换为 JSON 字面量后注入。
 // 注意:本脚本在【每个页面一个全新 Runtime】里运行,所以可以放心用全局变量。
 
 // 全局环境绑定。
@@ -318,7 +318,9 @@
       .replace(/\n\s*\n\s*\n+/g, "\n\n")
       .trim();
 
-    const PAGE_URL = __URL__;
+    // 相对地址的基准,不是文档地址:页面里第一个 <base href> 会顶掉文档地址,
+    // 浏览器就是这么做的(links / images 的相对路径都按它补全)。
+    const PAGE_URL = __BASE__;
 
     // HTML 实体解码。getAttribute 不解码,`&amp;` 会原样带出来 —— 链接和图片
     // 都要过这一道,否则带查询串的地址会被当成字面值:实测维基缩略图的

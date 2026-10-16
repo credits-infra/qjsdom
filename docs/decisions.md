@@ -430,6 +430,28 @@ The rule: state the mapping the server holds, rather than expecting every client
 preserve an order the protocol never promised. It is not a workaround for one client,
 because no client can recover a URL from a SHA-1 filename.
 
+## Follow `<base href>`, like a browser
+
+The README promised that relative URLs resolve the way a browser resolves them, and
+for a while that was not true: every relative address was completed against the
+document address. A page carrying `<base href="/zh/wiki/">` then resolved its
+external scripts and its own `fetch` calls against the site root, so the render
+produced a handful of 404s and an empty article. The symptom points at the site
+("they must be blocking us") rather than at the resolution, which is why it took a
+review to surface.
+
+One function now decides the base: the first `<base>` with an `href`, in tree order,
+resolved against the document address when it is relative. The spec allows a `base`
+element in the body, so the search covers the whole document rather than the head.
+Everything that completes a relative URL uses it — the external-script pass, the
+image probe, the page scripts' fetch bridge, image downloads, and Markdown link
+completion.
+
+`location.href` deliberately still reports the document address. A browser keeps
+"which document am I" and "relative URLs relative to what" apart, and page scripts
+depend on the difference: one is the page the user is on, the other is where assets
+come from.
+
 ## Paths not taken
 
 **markitdown** converts many formats to Markdown and looks like a natural fit. It
