@@ -264,6 +264,45 @@ a `file://` base produces `http://file:/wiki/x` — an address nobody can open. 
 http(s) page addresses take part in link resolution now; anything else keeps the
 relative link as it stands, matching what the plain-text link list already shows.
 
+## Run the page's scripts, but through the same door
+
+A page whose content is assembled by JavaScript is common enough that skipping its
+scripts returns an empty shell. So the scripts run, and `fetch` exists. What the
+scripts must not have is a second route into the network: whatever the page author's
+code can reach is what this machine can be made to scan. `fetch` therefore calls the
+same `fetcher` used for the page itself — scheme allowlist, SSRF guard with a
+re-check on every redirect, size cap, timeout. Two limits come from that reasoning
+rather than from politeness: `GET` only, because a `POST` issued from page script
+would have this machine writing to third parties, and a request count per page,
+because a loop that never stops fetching should not hold the render open.
+
+`fetch` is called synchronously into Go. Browsers make it asynchronous, but this is
+a scraper with a hard page timeout, and a synchronous call makes the order
+"script → response → callback" deterministic instead of dependent on event-loop
+scheduling. Callbacks still run as microtasks, which is where the next problem was.
+
+QuickJS drains its microtask queue in `js_std_loop`, after each evaluation returns.
+The runner used to queue scripts and extract content inside a single evaluation,
+which meant every `Promise.then` or `fetch().then` callback ran *after* extraction —
+its DOM changes were never in the result. Measured with a four-line fixture: the
+page returned the paragraph's original text. Splitting the runner into two
+evaluations (scripts, then extraction, with the host draining the queue between
+them) fixed it, and it is a necessary precondition for `fetch` to be worth having at
+all. The extract pass reads the document from a global rather than re-parsing, and
+never re-runs scripts: side effects must not happen twice.
+
+`<script src>` is fetched in Go and put back inline at its original position,
+instead of being loaded by page script. Order is the reason: browsers execute
+external scripts in document order, and inlining at the original spot preserves that
+without writing a serial scheduler. `async` and `defer` are not implemented, so the
+order that remains is the deterministic one.
+
+One failure mode shaped the code. A 404 response body is an HTML error page; inlined
+as a script it produces a stray `expecting ';'` in `scriptErrs` and hides the actual
+reason, which is that the script could not be fetched. Non-2xx responses and
+responses declaring `text/html` are now recorded with their status and skipped
+instead of being run.
+
 ## Guard against SSRF
 
 This component ends up exposed to a chat group where anyone can trigger a fetch.

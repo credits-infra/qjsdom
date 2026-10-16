@@ -34,6 +34,9 @@ qjsdom -download-images -images-dir /tmp/imgs https://example.com
 
 # Get the article as Markdown, keeping headings, lists, and tables
 qjsdom -markdown -mode article https://en.wikipedia.org/wiki/Glycolysis
+
+# Render without letting the page's scripts touch the network
+qjsdom -no-js-fetch -no-script-src https://example.com
 ```
 
 `-mode` picks the extraction strategy. Use `article` for articles and
@@ -84,6 +87,8 @@ Environment variables:
 | `QJSDOM_DEBUG` | off | Set to `1` for diagnostics on stderr |
 | `QJSDOM_ALLOW_SCHEMES` | empty | Extra URL schemes to allow. Empty means http and https only |
 | `QJSDOM_MAX_CONCURRENCY` | `2` | Page requests handled at once. Further requests queue, up to twice this many, then get a busy error |
+| `QJSDOM_JS_FETCH` | on | Let the page's own scripts make requests. `0` turns `fetch` and `XMLHttpRequest` off |
+| `QJSDOM_SCRIPT_SRC` | on | Load `<script src>` files and run them where they sit. `0` leaves them alone |
 
 ### URL schemes
 
@@ -139,6 +144,45 @@ badge stays out of the list. `all` mode without a selector keeps the whole page 
 with it every image on it. Pass `selector` when a figure is missing from a page
 that has one.
 
+## Scripts on the page
+
+Pages that build their content in JavaScript are common enough that skipping their
+scripts means returning an empty shell. So the scripts run, and they can fetch.
+
+`fetch` and `XMLHttpRequest` are real here, but they go through the same door as
+the page fetch itself: the scheme allowlist, the SSRF guard (re-checked on every
+redirect), the size cap, and the timeout. A page's scripts do not get a second
+path into the network, because whatever they can reach is what a page author's
+code can scan. Three limits sit on top: `GET` only (a `POST` from a page would make
+this machine send writes to third parties), 15 requests per page, and 1 MB per
+response.
+
+Relative URLs resolve against the page address, the way a browser does it.
+`Response` carries what scripts actually read: `status`, `ok`, `url`, `headers`,
+`redirected`, `text()`, `json()`, `arrayBuffer()`. Binary bodies are not supported —
+the host bridge returns text, so `arrayBuffer()` gives the UTF-8 bytes of that text
+rather than the original bytes.
+
+`<script src>` files are fetched too, then put back inline where they were. Keeping
+the source in place is what preserves execution order; a browser runs external
+scripts in document order, and inlining them at their original position does the
+same thing without a scheduler. `async` and `defer` are not implemented — scripts
+run in document order, and that order is the deterministic one. `type="module"` is
+skipped, since it needs import resolution. A response that is not 2xx, or that
+declares `text/html`, is not run at all: a 404 error page inlined as a script only
+produces a stray syntax error that hides the real reason.
+
+Scripts run in two passes for one reason. QuickJS drains its microtask queue after
+each evaluation, not during, so a callback queued by `fetch(...).then(...)` would
+run *after* the content had already been extracted — the callback's changes to the
+DOM simply would not be there. The runner therefore executes scripts in one
+evaluation, lets the host drain the queue, and extracts content in the next.
+
+Each failure carries a reason. When a script cannot be fetched, is not 2xx, or is
+skipped for its type, `scriptErrs` says which script and why. When one throws, the
+entry names the script and the line: `not a function` on its own tells you nothing
+once a page has jQuery plus its own scripts.
+
 ## What it will not do
 
 This is not a browser. There is no layout engine, so a page that loads content
@@ -147,8 +191,16 @@ client-side single page app renders as an empty shell. Server-rendered apps such
 as Next.js, Nuxt, Astro, and VitePress work, which covers most of what people
 call "a React page."
 
-External scripts do not load, so a page that needs `<script src>` to build its
-content stays empty. There is no login, no clicking, and no interaction.
+Scripts run, and `<script src>` files load, so a page that builds its content in
+JavaScript usually comes back with that content. What does not happen is
+interaction: no login, no clicking, no scrolling, and nothing that only appears
+after a person does something.
+
+`document.write` is not implemented — linkedom has no such method — so a page that
+assembles its content that way comes back without that content. It fails at the call
+site with a bare `not a function`, which is exactly what the line number in
+`scriptErrs` exists to point at. [quotes.toscrape.com/js/](https://quotes.toscrape.com/js/)
+is a live example: its jQuery loads and runs, and the quotes never appear.
 
 `article` mode guesses. It walks a fixed list of likely containers and takes the
 first one with enough text. When it picks wrong, pass `-selector` with the
