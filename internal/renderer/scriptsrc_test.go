@@ -107,7 +107,7 @@ func Test关掉外链脚本加载(t *testing.T) {
 
 // Test外链脚本里的script结束标签被转义 否则我们拼内联块时会被提前截断。
 func Test外链脚本里的script结束标签被转义(t *testing.T) {
-	if got := 去尾标签(`var s = "</script>";`); strings.Contains(got, "</script") {
+	if got := 防截断(`var s = "</script>";`); strings.Contains(got, "</script") {
 		t.Errorf("没有转义 </script:%q", got)
 	}
 	if got := 安全注释("地址 http://x/*/y"); strings.Contains(got, "*/") {

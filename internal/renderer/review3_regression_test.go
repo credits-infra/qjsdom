@@ -75,3 +75,35 @@ func Test超上限被跳过的脚本不被JS通路取回(t *testing.T) {
 	}
 }
 
+// Test内联脚本块的结束标签大小写不敏感 —— D3(高)。
+// 我们把外链脚本源码内联进 <script>…</script>:HTML 解析器在 `</script` 处结束
+// 该元素,而且**大小写不敏感**。之前的转义只替换小写 `</script`,所以源码里出现
+// `</SCRIPT>` 时内联块被提前截断:后面的代码当成文本漏进 DOM,脚本本身报语法错。
+// 判据:①那段本该死掉的标记不能出现在正文里;②脚本要能正常跑完。
+func Test内联脚本块的结束标签大小写不敏感(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/case.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		// 源码里带着大写结束标签(真实站点写 document.write('<SCRIPT>…') 时就会出现)
+		w.Write([]byte(`var 标记 = "</SCRIPT>请勿泄漏到正文</SCRIPT>";
+document.querySelector("#c p").textContent = "大写结束标签下的脚本跑完了";`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	html := `<!DOCTYPE html><html lang="zh"><head><title>大小写</title></head><body>
+<article id="c"><p>原文本</p></article>
+<script src="/case.js"></script>
+</body></html>`
+	res, err := Render(html, srv.URL+"/p", 测试选项())
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	if strings.Contains(res.Text, "请勿泄漏到正文") {
+		t.Errorf("内联块被 </SCRIPT> 提前截断,源码泄漏成了正文:%q", res.Text)
+	}
+	if !strings.Contains(res.Text, "大写结束标签下的脚本跑完了") {
+		t.Errorf("脚本没能跑完(正文=%q errs=%v)", res.Text, res.ScriptErrs)
+	}
+}
+

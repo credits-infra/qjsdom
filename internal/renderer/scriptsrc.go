@@ -134,7 +134,7 @@ func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
 		// (实测:jquery 与页面自身脚本同页时,就是这么一句,查不出是谁)。
 		// 标签只是给报错用的,注释只为可读;两者都不影响执行。
 		return `<script data-qjsdom-from="` + 标签转义(abs) + `">/* qjsdom: 外链内联 ` +
-			安全注释(abs) + " */\n" + 去尾标签(res.HTML) + "\n</script>"
+			安全注释(abs) + " */\n" + 防截断(res.HTML) + "\n</script>"
 	})
 
 	return out, notes
@@ -146,10 +146,17 @@ func 是HTML响应(contentType string) bool {
 	return strings.Contains(ct, "text/html") || strings.Contains(ct, "application/xhtml")
 }
 
-// 去尾标签 防止脚本源码里的 </script> 把我们的内联块提前截断。
-// 拼接处的风险只在这一处,所以只在这一处处理:HTML 规范里必须转义。
-func 去尾标签(code string) string {
-	return strings.ReplaceAll(code, "</script", `<\/script`)
+// 正则结束标签 匹配可能提前结束 <script> 元素的序列。
+// ⚠️ 必须大小写不敏感:HTML 解析器对 `</script` 不区分大小写,而原先只替换小写
+// 形态 —— 实测源码里出现 `</SCRIPT>` 时内联块被提前截断,后面的代码漏成正文,
+// 脚本本身报 "unexpected end of string"(第三轮交叉评审 D3)。
+var 正则结束标签 = regexp.MustCompile(`(?i)</script`)
+
+// 防截断 把可能提前结束 <script> 元素的 `</script` 换成 `<\/script`(JS 里等价,
+// HTML 解析器不再认它)。脚本源码与内联注释里的 URL 都要过这一道 —— 两者都来自
+// 页面,都可能被构造成带结束标签。
+func 防截断(code string) string {
+	return 正则结束标签.ReplaceAllString(code, `<\/script`)
 }
 
 // 标记跳过 给"不再执行"的 <script> 打个标记,原因用短标识(不塞 URL —— 那会
@@ -176,10 +183,11 @@ func 标签转义(s string) string {
 	return strings.ReplaceAll(s, `"`, "%22")
 }
 
-// 安全注释 让 URL 里的 */ 不会把注释提前闭合。
+// 安全注释 让 URL 里的 */ 与 </script 都不会破坏我们拼出来的内联块。
 func 安全注释(s string) string {
 	s = strings.ReplaceAll(s, "*/", "* /")
-	return strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	return 防截断(s)
 }
 
 var 属性正则 = regexp.MustCompile(`(?is)\b([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
