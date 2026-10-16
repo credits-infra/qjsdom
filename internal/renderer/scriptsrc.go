@@ -113,6 +113,13 @@ func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
 			notes = append(notes, fmt.Sprintf("note: 外链脚本取不到(%s): HTTP %d", src, res.StatusCode))
 			return tag
 		}
+		// 超过单脚本上限被截断的不要执行:半个脚本只会报一句没头没尾的语法错,
+		// 把真正的原因(脚本太大)埋掉 —— 与"取不到"一样处理:留名、留原因、跳过。
+		if res.Truncated {
+			notes = append(notes, fmt.Sprintf(
+				"note: 外链脚本未执行(%s): 超过单脚本上限 %d 字节,响应被截断", src, maxScriptSrcBytes))
+			return tag
+		}
 		// 响应明确是 HTML 也不执行(错误页、登录页、反爬拦截页都长这样)。
 		// 浏览器会执行非 JS 类型的脚本内容,但那是历史包袱;抓取器不需要这个行为。
 		if ct := res.Header.Get("Content-Type"); 是HTML响应(ct) {

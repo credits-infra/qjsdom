@@ -223,3 +223,42 @@ func Test内联module按普通脚本执行并留提示(t *testing.T) {
 		t.Errorf("应当说明 import 不会解析,实际:%v", res.ScriptErrs)
 	}
 }
+
+// Test超上限的脚本不执行 钉住一个实测出来的坑:fetcher 超过上限会把响应截断,
+// 而半个脚本执行起来只会报一句「没头没尾的语法错」——真原因(脚本太大)被埋掉。
+// 判据用 Result.Truncated(不是靠响应体里的标记字符串),因为截断与"恰好等于上限"
+// 在字节数上无法区分。
+func Test超上限的脚本不执行(t *testing.T) {
+	大块 := strings.Repeat("var x = 1;\n", 60000) // ~660KB > 512KB 上限
+	mux := http.NewServeMux()
+	mux.HandleFunc("/huge.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(大块 + `document.querySelector("#c p").textContent = "超大脚本不该跑";`))
+	})
+	mux.HandleFunc("/ok.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`document.querySelector("#c p").textContent = "正常脚本跑过了";`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	html := `<!DOCTYPE html><html lang="zh"><head><title>上限</title></head><body>
+<article id="c"><p>原文本</p></article>
+<script src="/huge.js"></script>
+<script src="/ok.js"></script>
+</body></html>`
+	res, err := Render(html, srv.URL+"/p", 测试选项())
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	if strings.Contains(res.Text, "超大脚本不该跑") {
+		t.Errorf("被截断的脚本被执行了:%q", res.Text)
+	}
+	if !strings.Contains(res.Text, "正常脚本跑过了") {
+		t.Errorf("后面的正常脚本也不该被连累:%q(scriptErrs=%v)", res.Text, res.ScriptErrs)
+	}
+	记录 := strings.Join(res.ScriptErrs, " ")
+	if !strings.Contains(记录, "huge.js") || !strings.Contains(记录, "超过单脚本上限") {
+		t.Errorf("被截断的脚本应当留名并说明原因,实际:%s", 记录)
+	}
+}

@@ -124,6 +124,10 @@ type Result struct {
 	Header http.Header
 	// Redirected 表示这次抓取跟随过重定向(fetch 的 Response.redirected)。
 	Redirected bool
+	// Truncated 表示响应体因为超过 MaxBytes 被截断了。
+	// 调用方需要它来区分"完整拿到"与"拿到一半" —— 对脚本来说,半个脚本
+	// 执行起来只会报一句没头没尾的语法错,不如不执行。
+	Truncated bool
 }
 
 // Fetch 抓取 url 并返回 HTML 源码。
@@ -221,6 +225,7 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 		Elapsed:    time.Since(start),
 		Header:     resp.Header,
 		Redirected: finalURL != u.String(),
+		Truncated:  truncated,
 	}, nil
 }
 
@@ -265,6 +270,7 @@ func fetchLocalFile(u *url.URL, opt Options) (*Result, error) {
 		StatusCode: 200,
 		Bytes:      int64(len(body)),
 		Elapsed:    time.Since(start),
+		Truncated:  truncated,
 	}, nil
 }
 
