@@ -88,8 +88,13 @@ type Options struct {
 	// Selector 直接指定正文容器(对 all / article 生效;
 	// links 模式忽略它 —— 那种页面要的是全部链接)。
 	Selector string
-	// MaxTextLen 截断正文长度(0 = 不截断)。
+	// MaxTextLen 截断正文长度(0 = 不截断)。按【字符】计,不是字节。
 	MaxTextLen int
+	// Markdown 为 true 时额外产出 Markdown(Result.Markdown)。
+	//
+	// 转换交给现成的库(internal/markdown),不在 JS 里另写一份规则:
+	// HTML→Markdown 的边界(嵌套列表、表格、转义)不值得自己踩一遍。
+	Markdown bool
 	// RunScripts 是否执行页面内联脚本(默认 true)。
 	RunScripts bool
 	// EnableImages 是否让 `new Image()` 真的去取图片尺寸(默认 true)。
@@ -125,6 +130,13 @@ type Result struct {
 	// Degraded 为 true 表示 DOM 解析失败、退回了粗暴的文本提取。
 	// 这种情况仍然会返回结果(而不是报错),调用方应按需降级处理。
 	Degraded bool `json:"degraded"`
+
+	// HTML 是正文容器的 HTML(已去掉 script/style),仅 Options.Markdown
+	// 为 true 时填充。它是转换 Markdown 的中间产物,转换完就清空 ——
+	// 留着只会让 -json 输出凭空大一大截。
+	HTML string `json:"html,omitempty"`
+	// Markdown 是正文的 Markdown 版本,仅 Options.Markdown 为 true 时填充。
+	Markdown string `json:"markdown,omitempty"`
 
 	// ImageFiles 是已下载的页面图片(仅 DownloadImages 为 true 时填充)。
 	// 每项含本地路径 —— 上层可直接把它交给支持图像输入的模型。
@@ -190,6 +202,20 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	if opt.MaxTextLen > 0 {
 		out.Text = truncateRunes(out.Text, opt.MaxTextLen)
 	}
+
+	// Markdown 与纯文本取同一份内容(同一个正文容器),截断也走同一套字符口径。
+	if opt.Markdown {
+		md, err := 转Markdown(&out, pageURL)
+		if err != nil {
+			// 转换失败不该让整次渲染失败:纯文本还在,调用方拿到的仍是有用的结果。
+			out.ScriptErrs = append(out.ScriptErrs, fmt.Sprintf("note: Markdown 转换失败,已退回纯文本: %v", err))
+		} else if opt.MaxTextLen > 0 {
+			out.Markdown = truncateRunes(md, opt.MaxTextLen)
+		} else {
+			out.Markdown = md
+		}
+	}
+	out.HTML = "" // 中间产物,不留在结果里
 	out.Elapsed = time.Since(start)
 
 	// 按需下载页面图片 —— 图片内容是要交给模型看的产出
@@ -255,7 +281,15 @@ func buildRunner(html, pageURL string, opt Options) string {
 	}
 	modeLit, _ := json.Marshal(string(mode))
 
+	needHTMLLit := "false"
+	if opt.Markdown {
+		needHTMLLit = "true"
+	}
+
 	s := pageRunner
+	// ⚠️ 顺序要紧:__HTML__ 是 __NEED_HTML__ 的子串,先替换 __HTML__ 会把
+	// 后者改写成 __NEED_<html 字面量>,占位符就再也匹配不上了。
+	s = strings.ReplaceAll(s, "__NEED_HTML__", needHTMLLit)
 	s = strings.ReplaceAll(s, "__HTML__", string(htmlLit))
 	s = strings.ReplaceAll(s, "__URL__", string(urlLit))
 	s = strings.ReplaceAll(s, "__SELECTOR__", string(selLit))

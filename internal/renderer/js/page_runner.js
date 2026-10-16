@@ -106,6 +106,10 @@
     //   all(默认)什么都不丢,选错时的重试成本只是一次渲染。
     const MODE = String(__MODE__ || "all").toLowerCase();
 
+    // 是否需要把正文容器的 HTML 交回 Go 侧(调用方要 Markdown 时才要)。
+    // 序列化整页 HTML 不是零成本,而且会给不需要它的调用方徒增体积,所以按需。
+    const NEED_HTML = __NEED_HTML__;
+
     const normText = (s) => String(s || "")
       .replace(/[ \t\u00a0]+/g, " ")
       .replace(/\n\s*\n\s*\n+/g, "\n\n")
@@ -187,6 +191,8 @@
     let node = null;
     let text = "";
     let linkList = [];
+    // 正文容器的 HTML(仅 NEED_HTML 时填充),给 Go 侧的 Markdown 转换用。
+    let 正文HTML = "";
 
     if (MODE === "links") {
       // 搜索页 / 目录页 / 导航页:链接就是内容本身
@@ -233,6 +239,12 @@
         }
       } catch (e) { target = node; }
       try { text = normText(target.textContent || ""); } catch (e) { text = ""; }
+      // Markdown 走 Go 侧现成的转换器(见 internal/markdown):交出去的 HTML 就是
+      // 上面这个已经去掉 script/style 的克隆体,两边取的是同一份内容 ——
+      // 免得"纯文本里有、Markdown 里没有"这种对不上的情况。
+      if (NEED_HTML) {
+        try { 正文HTML = target.outerHTML || ""; } catch (e) { 正文HTML = ""; }
+      }
       linkList = collectLinks();
     }
 
@@ -294,6 +306,7 @@
       scriptErrs: errs,
       links: linkList,
       images: images,
+      html: 正文HTML,
       hasBody: !!document.body,
       degraded: false,
       mode: MODE,
