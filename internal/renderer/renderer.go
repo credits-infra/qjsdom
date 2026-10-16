@@ -150,6 +150,12 @@ type Result struct {
 	HasBody    bool     `json:"hasBody"`
 	// Mode 实际使用的提取策略。
 	Mode string `json:"mode"`
+	// Charset 是抓取时采用的字符集名(如 gbk、utf-8),CharsetSource 是依据
+	// (header / meta / bom / guessed)。渲染层拿到的已经是解码后的字符串,
+	// 所以这两个字段只是转达 —— 由抓取的一侧填。空值表示调用方直接喂了 HTML。
+	Charset       string `json:"charset,omitempty"`
+	CharsetSource string `json:"charsetSource,omitempty"`
+
 	// Degraded 为 true 表示 DOM 解析失败、退回了粗暴的文本提取。
 	// 这种情况仍然会返回结果(而不是报错),调用方应按需降级处理。
 	Degraded bool `json:"degraded"`

@@ -39,7 +39,7 @@ func Test响应头声明GBK(t *testing.T) {
 	if !strings.Contains(文本, 中文句) {
 		t.Errorf("正文没解对: %q", 文本[:min(80, len(文本))])
 	}
-	if 结论.Name != "gbk" || 结论.Source != "响应头" {
+	if 结论.Name != "gbk" || 结论.Source != "header" {
 		t.Errorf("结论应为 gbk/响应头,实际 %+v", 结论)
 	}
 }
@@ -78,7 +78,7 @@ func TestBig5声明(t *testing.T) {
 func TestBOM优先于声明(t *testing.T) {
 	体 := append([]byte{0xEF, 0xBB, 0xBF}, []byte("<p>"+中文句+"</p>")...)
 	文本, 结论 := DecodeHTML(体, "text/html; charset=gbk") // 头在撒谎
-	if 结论.Source != "BOM" || 结论.Name != "utf-8" {
+	if 结论.Source != "bom" || 结论.Name != "utf-8" {
 		t.Errorf("BOM 应当优先,实际 %+v", 结论)
 	}
 	if strings.ContainsRune(文本, 0xFEFF) {
@@ -122,7 +122,7 @@ func Test抓取时按声明解码(t *testing.T) {
 	if !strings.Contains(res.HTML, 中文句) {
 		t.Errorf("抓取结果没解对编码: %q", res.HTML[:min(80, len(res.HTML))])
 	}
-	if res.Charset.Name != "gbk" || res.Charset.Source != "响应头" {
+	if res.Charset.Name != "gbk" || res.Charset.Source != "header" {
 		t.Errorf("结论应随结果一起给出,实际 %+v", res.Charset)
 	}
 }
@@ -144,7 +144,7 @@ func Test未声明时推断简体中文(t *testing.T) {
 	if !strings.Contains(文本, 中文句) {
 		t.Errorf("未声明的 GBK 页没解对: %+v", 结论)
 	}
-	if 结论.Name != "gb18030" || 结论.Source != "未声明(推断:简体中文)" {
+	if 结论.Name != "gb18030" || 结论.Source != "guessed" {
 		t.Errorf("结论应为推断简体中文,实际 %+v", 结论)
 	}
 }

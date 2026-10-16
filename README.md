@@ -132,6 +132,16 @@ Each failure carries a reason. When a script cannot be fetched, is not 2xx, or i
 
 `document.write` is available, and scripts it writes run. For which globals come from the engine, which from the DOM library, and which are shims in this repository, see [Architecture](docs/architecture.md#what-is-native-what-is-a-shim).
 
+## Encodings
+
+qjsdom decodes the page before the script runtime sees it, because linkedom and QuickJS both expect UTF-8 and a GBK article decoded as UTF-8 is a page of mojibake that nothing downstream can repair. The decoder reads the encoding in the order the HTML spec uses: a byte order mark first, then the `Content-Type` header, then a `<meta>` tag in the first kilobyte. Any label on the WHATWG list works, which covers `gbk`, `gb2312`, `gb18030`, `big5`, `shift_jis`, `euc-kr`, and the `windows-125x` family.
+
+When a page declares nothing at all, qjsdom guesses in the order that hurts least. Bytes that are already valid UTF-8 are taken as UTF-8. Otherwise the decoder looks for the two-byte structure of GBK Chinese and treats the page as GB18030 if it finds it. Everything else becomes windows-1252. Chromium is the only other tool we measured that gets both of these right, and its advantage there comes from a full encoding detector rather than from the spec.
+
+The result carries `charset` and `charsetSource`, so a caller holding unexpected text can see what the decoder decided. `charsetSource` is one of `header`, `meta`, `bom`, or `guessed`. A cache hit reports neither, since the cache stores decoded text.
+
+Undeclared Big5 and Shift_JIS pages are not guessed at, because their byte structure does not overlap with GBK and a wrong guess turns a readable page into a different kind of unreadable one. Those pages need a declaration, the same as they do in every tool that lacks a language detector.
+
 ## What it will not do
 
 This is not a browser. There is no layout engine, so a page that loads content when you scroll, or that measures element geometry, comes back thin. A pure client-side single page app renders as an empty shell. Server-rendered apps such as Next.js, Nuxt, Astro, and VitePress work, which covers most of what people call "a React page."

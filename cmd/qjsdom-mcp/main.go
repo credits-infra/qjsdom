@@ -107,16 +107,20 @@ type fetchArgs struct {
 
 // fetchOut 是返回给模型的结构化摘要(图片另外以内容块返回)。
 type fetchOut struct {
-	Title       string   `json:"title,omitempty"`
-	Mode        string   `json:"mode"`
-	TextLen     int      `json:"text_len"`
-	Degraded    bool     `json:"degraded,omitempty"`
-	ScriptsRan  string   `json:"scripts_executed,omitempty"`
-	ImagesSent  int      `json:"images_returned"`
-	ImagesFound int      `json:"images_found"`
-	LinksFound  int      `json:"links_found"`
-	FromCache   bool     `json:"from_cache,omitempty"`
-	Notice      []string `json:"notice,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Mode        string `json:"mode"`
+	TextLen     int    `json:"text_len"`
+	Degraded    bool   `json:"degraded,omitempty"`
+	ScriptsRan  string `json:"scripts_executed,omitempty"`
+	ImagesSent  int    `json:"images_returned"`
+	ImagesFound int    `json:"images_found"`
+	LinksFound  int    `json:"links_found"`
+	FromCache   bool   `json:"from_cache,omitempty"`
+	// Charset 与 CharsetSource 是抓取时的解码结论(header / meta / bom / guessed)。
+	// 模型拿到一页乱码时,这是第一个该看的字段。
+	Charset       string   `json:"charset,omitempty"`
+	CharsetSource string   `json:"charset_source,omitempty"`
+	Notice        []string `json:"notice,omitempty"`
 	// ImagePaths 是图片落盘后的绝对路径,只在设置了 QJSDOM_SAVE_IMAGES_DIR
 	// 时非空。内容块让模型看见图,路径让调用方把图发出去,这是两件事。
 	ImagePaths []string `json:"image_paths,omitempty"`
@@ -221,6 +225,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 			return errResult("抓取失败: " + err.Error()), out, nil
 		}
 		html = res.HTML
+		out.Charset, out.CharsetSource = res.Charset.Name, res.Charset.Source
 		if c != nil {
 			if err := c.Put(url, html); err != nil {
 				debugf(cfg, "未缓存: %v", err)

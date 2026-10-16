@@ -277,3 +277,25 @@ Using it directly means writing a browser, which is not what an embedded engine 
 
 **WebKitGTK** would render properly at 200 to 400 MB, well under chromium. It
 needs `webkit2gtk4.1`, `python3-gobject`, and a virtual display. That last part is the problem: the machine has no headless graphics environment at all. Installing one to avoid a browser is a poor trade.
+
+## Decode the page's declared encoding
+
+Every page arrives as bytes, and both linkedom and QuickJS want UTF-8. Treating bytes as UTF-8 works until someone hands you a GBK page, and then the whole article is mojibake with no way back. We found this the usual way: a measurement that came out wrong.
+
+Same page, no encoding declared anywhere in the HTTP header or the HTML:
+
+| Undeclared page | qjsdom before | httpx + markdownify | bun + happy-dom | chromium |
+| --- | --- | --- | --- | --- |
+| GBK, Chinese article | mojibake | mojibake | mojibake | correct |
+| windows-1252, French article | mojibake | mojibake | mojibake | correct |
+
+So the wire is: read what the page says, and guess only when it says nothing. The order follows the HTML spec because that order is what the page author had in mind: byte order mark, then the `Content-Type` header, then a `<meta>` tag. The label table comes from `golang.org/x/text/encoding/htmlindex`, which knows the WHATWG label set, so the decoder handles `gb2312`, `gbk`, `gb18030`, `big5`, `shift_jis`, and the `windows-125x` family without a list of our own.
+
+The guess is where the interesting decision sits. We look at the byte structure rather than at whether the decoded text looks like Chinese, because GB18030 decodes any byte sequence at all into something CJK-shaped: a French page decoded as GB18030 also produces a wall of characters that look Chinese, so "does it look Chinese" answers yes far too often. The structure check is harder to fool. GBK's common Chinese characters (the GB2312 level 1 block, which covers most of everyday text) are two bytes with a lead in `0xB0`-`0xF7` and a trail in `0xA1`-`0xFE`. A French accent is a single high byte followed by an ASCII letter or a space, so the pairs never form. We require a seventh of the high bytes to sit in that structure and at least four high bytes before guessing Chinese at all.
+
+Two details worth keeping:
+
+- A page that declares UTF-8 and then contains invalid bytes gets replacement characters instead of invalid sequences, because invalid UTF-8 handed to a JavaScript engine has undefined behavior in both linkedom and QuickJS.
+- The byte order mark wins over a lying header, which is what the spec says and what browsers do. A UTF-8 file with a BOM also loses that BOM before the DOM sees it, otherwise the article starts with an invisible `U+FEFF`.
+
+Undeclared Big5 and Shift_JIS pages stay unguessed. Their two-byte ranges overlap GBK's only partially, a wrong guess produces a different kind of unreadable page, and any real fix there is a language detector rather than a smarter guess. Chromium has one; we do not, and saying so is more useful than pretending.

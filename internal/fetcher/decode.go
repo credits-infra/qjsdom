@@ -29,7 +29,8 @@ import (
 type Charset struct {
 	// Name 是采用的字符集规范名,如 utf-8、gbk、gb18030、big5、windows-1252。
 	Name string
-	// Source 说明凭什么这么定:响应头 / meta / BOM / 未声明(按 UTF-8) / 推断。
+	// Source 说明凭什么这么定,取值是 header、meta、bom 或 guessed 之一。
+	// 用短码而不是自然语言:它要进 JSON 输出,调用方未必是中文读者。
 	Source string
 }
 
@@ -72,7 +73,7 @@ func 按BOM解(b []byte) (string, Charset, bool) {
 	if !ok {
 		return "", Charset{}, false
 	}
-	return 文本, Charset{Name: 名, Source: "BOM"}, true
+	return 文本, Charset{Name: 名, Source: "bom"}, true
 }
 
 // 取声明 按 HTML 规范的优先级取字符集声明:响应头优先于 meta。
@@ -81,7 +82,7 @@ func 取声明(contentType string, b []byte) (名, 来源 string) {
 	if contentType != "" {
 		if _, 参数, err := mime.ParseMediaType(contentType); err == nil {
 			if cs := strings.TrimSpace(参数["charset"]); cs != "" {
-				return cs, "响应头"
+				return cs, "header"
 			}
 		}
 	}
@@ -130,17 +131,17 @@ func 按名解码(名 string, b []byte) (string, bool) {
 // 硬猜会把港台与日文页面解坏,不如老实退回 UTF-8/西欧默认并把结论报出去。
 func 未声明时解码(b []byte) (string, Charset) {
 	if utf8.Valid(b) {
-		return string(b), Charset{Name: "utf-8", Source: "未声明(按 UTF-8)"}
+		return string(b), Charset{Name: "utf-8", Source: "guessed"}
 	}
 	if 像GBK汉字(b) {
 		if 文本, ok := 按名解码("gb18030", b); ok {
-			return 文本, Charset{Name: "gb18030", Source: "未声明(推断:简体中文)"}
+			return 文本, Charset{Name: "gb18030", Source: "guessed"}
 		}
 	}
 	if 文本, ok := 按名解码("windows-1252", b); ok {
-		return 文本, Charset{Name: "windows-1252", Source: "未声明(推断:西欧)"}
+		return 文本, Charset{Name: "windows-1252", Source: "guessed"}
 	}
-	return strings.ToValidUTF8(string(b), "\uFFFD"), Charset{Name: "utf-8", Source: "未声明(兜底)"}
+	return strings.ToValidUTF8(string(b), "\uFFFD"), Charset{Name: "utf-8", Source: "guessed"}
 }
 
 // 像GBK汉字 判断这串字节像不像 GBK/GB18030 的双字节汉字。

@@ -67,6 +67,9 @@ func main() {
 	var (
 		html    string
 		pageURL string
+		// 字符集 由抓取层给出,渲染后转达到输出里。
+		// 缓存命中时为空:缓存存的是已解码的文本,编码信息不在里面。
+		字符集 fetcher.Charset
 	)
 
 	// 网络参数在两条路径(联网抓取 / 本地文件)都要用 —— 后者用于图片探测
@@ -93,7 +96,7 @@ func main() {
 		if err != nil {
 			fatal("读取文件失败: %v", err)
 		}
-		html, _ = fetcher.DecodeHTML(b, "")
+		html, 字符集 = fetcher.DecodeHTML(b, "")
 		pageURL = "file://" + *filePath
 	} else {
 		if flag.NArg() < 1 {
@@ -121,6 +124,7 @@ func main() {
 			}
 			html = res.HTML
 			pageURL = res.URL
+			字符集 = res.Charset
 			if *stats {
 				fmt.Fprintf(os.Stderr, "[fetch]  HTTP %d  %.1f KB  %.2fs  %s\n",
 					res.StatusCode, float64(res.Bytes)/1024, res.Elapsed.Seconds(), res.URL)
@@ -156,9 +160,13 @@ func main() {
 	if err != nil {
 		fatal("渲染失败: %v", err)
 	}
+	out.Charset, out.CharsetSource = 字符集.Name, 字符集.Source
 
 	if *stats {
 		fmt.Fprintf(os.Stderr, "[render] %s\n", renderer.EngineVersion)
+		if out.Charset != "" {
+			fmt.Fprintf(os.Stderr, "[fetch]  字符集 %s(%s)\n", out.Charset, out.CharsetSource)
+		}
 		fmt.Fprintf(os.Stderr, "[render] 耗时 %.2fs | 脚本 %d/%d 执行成功 | 正文 %d 字\n",
 			out.Elapsed.Seconds(), out.ScriptsRan, out.ScriptTags, out.TextLen)
 		if *markdown {
