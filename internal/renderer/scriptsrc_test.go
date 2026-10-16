@@ -24,20 +24,32 @@ func Test外链脚本被加载并执行(t *testing.T) {
 }
 
 // Test外链脚本保持文档顺序 顺序错了等于给页面换了执行次序 —— 内联回原位才保序。
+//
+// ⚠️ 断言必须能分辨"顺序被换掉":早先的版本只检查正文里同时出现"内联1"与"内联2",
+// 而外链脚本本身不进轨迹 —— 于是把外链脚本挪到最前面(顺序坏掉)时测试照样通过
+// (第三轮评审 C2 实测确认)。现在外链脚本自己也往轨迹里写,并把完整次序钉成字符串。
 func Test外链脚本保持文档顺序(t *testing.T) {
-	srv := 起测试服务(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/o.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`window.__轨迹.push("外链");`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
 	html := `<!DOCTYPE html><html lang="zh"><head><title>顺序</title></head><body>
 <article id="c"><p>空</p></article>
 <script>window.__轨迹 = ["内联1"];</script>
-<script src="/app.js"></script>
+<script src="/o.js"></script>
 <script>window.__轨迹.push("内联2"); document.querySelector("#c p").textContent = window.__轨迹.join(" → ");</script>
 </body></html>`
 	res, err := Render(html, srv.URL+"/p", 测试选项())
 	if err != nil {
 		t.Fatalf("渲染失败: %v", err)
 	}
-	if !strings.Contains(res.Text, "内联1") || !strings.Contains(res.Text, "内联2") {
-		t.Fatalf("轨迹不完整: %q", res.Text)
+	想要 := "内联1 → 外链 → 内联2"
+	if !strings.Contains(res.Text, 想要) {
+		t.Errorf("执行次序应当是 %q,实际正文 %q(scriptErrs=%v)", 想要, res.Text, res.ScriptErrs)
 	}
 }
 
