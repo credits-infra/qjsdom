@@ -124,6 +124,9 @@ type Result struct {
 	Header http.Header
 	// Redirected 表示这次抓取跟随过重定向(fetch 的 Response.redirected)。
 	Redirected bool
+	// Charset 是这次解码采用的字符集与依据。页面的编码写进结果比写进日志有用:
+	// 调用方看到正文乱码时,第一件想知道的就是"它到底按什么解的"。
+	Charset Charset
 	// Truncated 表示响应体因为超过 MaxBytes 被截断了。
 	// 调用方需要它来区分"完整拿到"与"拿到一半" —— 对脚本来说,半个脚本
 	// 执行起来只会报一句没头没尾的语法错,不如不执行。
@@ -192,10 +195,7 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 		body = body[:opt.MaxBytes]
 	}
 
-	html, err := decodeBody(body, resp.Header.Get("Content-Type"))
-	if err != nil {
-		return nil, err
-	}
+	html, 结论 := DecodeHTML(body, resp.Header.Get("Content-Type"))
 	if truncated {
 		html += "\n<!-- qjsdom: 响应超过上限已截断 -->"
 	}
@@ -207,6 +207,7 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 	return &Result{
 		URL:        finalURL,
 		HTML:       html,
+		Charset:    结论,
 		StatusCode: resp.StatusCode,
 		Bytes:      int64(len(body)),
 		Elapsed:    time.Since(start),
@@ -244,16 +245,14 @@ func fetchLocalFile(u *url.URL, opt Options) (*Result, error) {
 	if truncated {
 		body = body[:opt.MaxBytes]
 	}
-	html, err := decodeBody(body, "")
-	if err != nil {
-		return nil, err
-	}
+	html, 结论 := DecodeHTML(body, "")
 	if truncated {
 		html += "\n<!-- qjsdom: 文件超过上限已截断 -->"
 	}
 	return &Result{
 		URL:        u.String(),
 		HTML:       html,
+		Charset:    结论,
 		StatusCode: 200,
 		Bytes:      int64(len(body)),
 		Elapsed:    time.Since(start),
@@ -322,15 +321,4 @@ func guardSSRF(host string) error {
 		}
 	}
 	return nil
-}
-
-// decodeBody 尽力把字节流解成 UTF-8 字符串。
-func decodeBody(b []byte, contentType string) (string, error) {
-	ct := strings.ToLower(contentType)
-	// Go 的 html 包只吃 UTF-8;这里做最小处理:
-	// 若声明了 charset=gbk/gb2312 等,提示调用方(暂不引入 x/text 依赖)。
-	if strings.Contains(ct, "gbk") || strings.Contains(ct, "gb2312") {
-		return string(b), nil // 保底:原样返回,由调用方决定
-	}
-	return string(b), nil
 }

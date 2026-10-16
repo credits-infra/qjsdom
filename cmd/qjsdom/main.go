@@ -93,7 +93,7 @@ func main() {
 		if err != nil {
 			fatal("读取文件失败: %v", err)
 		}
-		html = string(b)
+		html, _ = fetcher.DecodeHTML(b, "")
 		pageURL = "file://" + *filePath
 	} else {
 		if flag.NArg() < 1 {

@@ -6,6 +6,7 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/fastschema/qjs v0.0.6
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	golang.org/x/text v0.37.0
 )
 
 require (
