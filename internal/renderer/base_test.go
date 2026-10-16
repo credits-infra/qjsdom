@@ -56,13 +56,15 @@ func 测试选项带基准() Options {
 
 func Test外链脚本按baseHref补全(t *testing.T) {
 	srv, 见过 := 记录服务(t, map[string]string{
-		"/zh/wiki/app.js": `document.querySelector("#c p").textContent = "底座上的脚本跑过了";`,
+		"/zh/wiki/assets/app.js": `document.querySelector("#c p").textContent = "底座上的脚本跑过了";`,
 	})
 
-	// 页面地址在 /zh/wiki/page,而脚本写的是相对地址 —— 只有把 <base href="/zh/wiki/">
-	// 算进去才会打到 /zh/wiki/app.js
+	// ⚠️ base 的目录必须与文档地址的目录【不同】:第四轮交叉评审指出,早先两者同为
+	// /zh/wiki/ 时,"用 base 补" 与 "用文档地址补" 结果一样,于是把 有效基准 变回
+	// return pageURL 这条测试照样通过 —— 等于什么都没锁住。现在只有真的用了 base
+	// 才会打到 /zh/wiki/assets/app.js(/zh/wiki/app.js 不存在 → 会失败)。
 	html := `<!DOCTYPE html><html lang="zh"><head><title>base</title>
-<base href="/zh/wiki/">
+<base href="/zh/wiki/assets/">
 </head><body>
 <article id="c"><p>原文本</p></article>
 <script src="app.js"></script>
@@ -85,12 +87,11 @@ func Test外链脚本按baseHref补全(t *testing.T) {
 
 func Test页面脚本的fetch按baseHref补全(t *testing.T) {
 	srv, 见过 := 记录服务(t, map[string]string{
-		"/zh/wiki/data.json": `获取到不该出现的东西`,
+		"/zh/wiki/assets/data.json": `{"ok":1}`,
 	})
-	// 用 JSON 端点会走 fetcher 的 HTML 通道,所以这里直接让服务器回一段文本,
-	// 页面脚本只断言"请求打到了 /zh/wiki/data.json"。
+	// 同上:base 目录与文档目录必须不同,否则这条测试分不出"有没有用 base"。
 	html := `<!DOCTYPE html><html lang="zh"><head><title>base</title>
-<base href="/zh/wiki/">
+<base href="/zh/wiki/assets/">
 </head><body>
 <article id="c"><p>原文本</p>
 <script>
@@ -105,8 +106,11 @@ fetch('data.json').then(function () {
 	}
 	打了 := false
 	for _, p := range 见过() {
-		if p == "/zh/wiki/data.json" {
+		if p == "/zh/wiki/assets/data.json" {
 			打了 = true
+		}
+		if p == "/zh/wiki/data.json" {
+			t.Errorf("fetch 被补到了文档目录(/zh/wiki/data.json)—— 说明没用 base")
 		}
 		if p == "/data.json" {
 			t.Errorf("页面脚本的 fetch 被补到了站点根目录(/data.json)")
