@@ -121,9 +121,12 @@ func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
 			return tag
 		}
 
-		// 内联回原位置。用 CDATA 风格注释包住原始 URL 只为可读性 ——
-		// 注释不会被执行,也不会被 runner 的 script 抽取当代码跑。
-		return "<script>/* qjsdom: 外链内联 " + 安全注释(abs) + " */\n" + 去尾标签(res.HTML) + "\n</script>"
+		// 内联回原位置。带上来源标签:出错时 runner 会把地址写进 scriptErrs ——
+		// 页面上的脚本一多,只报一句 "not a function" 根本不知道是哪一个
+		// (实测:jquery 与页面自身脚本同页时,就是这么一句,查不出是谁)。
+		// 标签只是给报错用的,注释只为可读;两者都不影响执行。
+		return `<script data-qjsdom-from="` + 标签转义(abs) + `">/* qjsdom: 外链内联 ` +
+			安全注释(abs) + " */\n" + 去尾标签(res.HTML) + "\n</script>"
 	})
 
 	return out, notes
@@ -139,6 +142,12 @@ func 是HTML响应(contentType string) bool {
 // 拼接处的风险只在这一处,所以只在这一处处理:HTML 规范里必须转义。
 func 去尾标签(code string) string {
 	return strings.ReplaceAll(code, "</script", `<\/script`)
+}
+
+// 标签转义 让属性值里不会出现引号(URL 里的 " 用 %22 表达,不影响可读性,
+// 也避免依赖实体解码 —— linkedom 的 getAttribute 不解码实体)。
+func 标签转义(s string) string {
+	return strings.ReplaceAll(s, `"`, "%22")
 }
 
 // 安全注释 让 URL 里的 */ 不会把注释提前闭合。

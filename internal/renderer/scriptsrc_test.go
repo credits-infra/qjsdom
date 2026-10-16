@@ -1,6 +1,8 @@
 package renderer
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -110,5 +112,56 @@ func Test外链脚本里的script结束标签被转义(t *testing.T) {
 	}
 	if got := 安全注释("地址 http://x/*/y"); strings.Contains(got, "*/") {
 		t.Errorf("注释没被保护:%q", got)
+	}
+}
+
+// Test脚本报错带行号与来源 钉住可诊断性:多脚本页面上只报一句 "not a function"
+// 等于没信息。qjs 的 e.stack 带行列号(顶帧是页面脚本里的位置),外链脚本还有
+// Go 侧内联时打的来源标签 —— 两者都该进 scriptErrs。
+func Test脚本报错带行号与来源(t *testing.T) {
+	srv := 起测试服务(t)
+	// 第 2 行出错(第 1 行是注释)
+	html := `<!DOCTYPE html><html lang="zh"><head><title>报错</title></head><body>
+<article id="c"><p>正文</p></article>
+<script>
+// 第一行是注释,第二行才出错
+null.没有这个方法();
+</script>
+</body></html>`
+	res, err := Render(html, srv.URL+"/p", 测试选项())
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	记录 := strings.Join(res.ScriptErrs, " | ")
+	if !strings.Contains(记录, "脚本第 3 行") {
+		t.Errorf("内联脚本的报错应当带行号(第 3 行),实际:%s", 记录)
+	}
+}
+
+// Test外链脚本出错时点名来源 同一件事,外链版本:出错必须能看出是哪个地址。
+func Test外链脚本出错时点名来源(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/broken.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte("null.noSuchMethod();"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	html := `<!DOCTYPE html><html lang="zh"><head><title>外链报错</title></head><body>
+<article id="c"><p>正文</p></article>
+<script src="/broken.js"></script>
+</body></html>`
+	opt := 测试选项()
+	res, err := Render(html, srv.URL+"/p", opt)
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	记录 := strings.Join(res.ScriptErrs, " | ")
+	if !strings.Contains(记录, "broken.js") {
+		t.Errorf("外链脚本的报错应当点出地址,实际:%s", 记录)
+	}
+	if !strings.Contains(记录, "脚本第") {
+		t.Errorf("外链脚本的报错也应当带行号,实际:%s", 记录)
 	}
 }

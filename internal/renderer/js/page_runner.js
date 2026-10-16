@@ -82,6 +82,21 @@
     let ran = 0;
     let errs = [];
 
+    // 页面脚本出错时记下"哪个脚本 + 第几行"。
+    // 实测:一句 "not a function" 在多脚本页面上等于没信息 —— 而 qjs 的 e.stack
+    // 带行列号,顶帧就是页面脚本里的位置(形如 "at <eval> (<input>:2:21)")。
+    // 外链脚本由 Go 侧内联时带了来源标签,拼在最前面。
+    const 脚本错误信息 = (e, 来源) => {
+      const msg = String((e && e.message) ? e.message : e).slice(0, 90);
+      let 位置 = "";
+      try {
+        const m = String((e && e.stack) || "").match(/<input>:(\d+):(\d+)/);
+        if (m) 位置 = " (脚本第 " + m[1] + " 行)";
+      } catch (_) { /* 拿不到行号就算了,别让报错本身变成错误 */ }
+      return ((来源 ? 来源 + ": " : "") + msg + 位置).slice(0, 140);
+    };
+
+
     if (PHASE === "scripts") {
       // ---- 1. 解析 HTML ----
       ({ document } = parseHTML(__HTML__));
@@ -101,11 +116,15 @@
         let code = "";
         try { code = s.textContent || ""; } catch (e) { continue; }
         if (!code.trim()) continue;
+        // 外链脚本(由 Go 侧取回并内联)带来源标签 —— 报错时点名,否则
+        // 页面上脚本一多就只剩下一句"某某不是函数"。
+        let 来源 = "";
+        try { 来源 = s.getAttribute("data-qjsdom-from") || ""; } catch (e) {}
         try {
           (0, eval)(code);
           ran++;
         } catch (e) {
-          errs.push(String((e && e.message) ? e.message : e).slice(0, 90));
+          errs.push(脚本错误信息(e, 来源));
         }
       }
 
