@@ -103,6 +103,13 @@ func 展开外部脚本(html, 基准 string, opt Options, 预算 *网络预算) 
 				"note: 外链脚本超过 %d 个,其余未加载(从 %s 起)", maxScriptSrcCount, src))
 			return 标记跳过(tag, "over-count")
 		}
+		// 时间预算:外链脚本这一遍最坏是 10 个 × 单脚本 8s = 80s(串行),同样要守。
+		// 预算对象与页面脚本的 fetch、Image 探测共用,起点钉在第一次真的联网那一刻。
+		if 预算.用尽() {
+			notes = append(notes, fmt.Sprintf(
+				"note: 外链脚本不再加载(%s):本页联网时间预算已用尽", src))
+			return 标记跳过(tag, "budget")
+		}
 		取了++
 
 		abs := src
