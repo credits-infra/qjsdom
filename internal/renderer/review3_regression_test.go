@@ -107,3 +107,77 @@ document.querySelector("#c p").textContent = "大写结束标签下的脚本跑�
 	}
 }
 
+// Test标签名大小写不绕开数量上限 —— 第三轮【复核】新发现(不在评审报告里)。
+//
+// 症状:`展开外部脚本` 开头用 strings.Contains(html, "<script") 做早退,而它是
+// 大小写敏感的 —— 页面把标签写成 <ScRiPt src=...> / <SCRIPT SRC=...> 时,
+// 整个外链脚本能力会【静默失效】:既不内联,也没有一条 note。
+// 后果实测:12 个 <ScRiPt src> 时,超过数量上限(maxScriptSrcCount=10)的第 11、12 个
+// 照跑(正文 n=12);根因修掉之后,三种大小写都恰好 n=10。
+func Test标签名大小写不绕开数量上限(t *testing.T) {
+	mux := http.NewServeMux()
+	for i := 0; i < 12; i++ {
+		mux.HandleFunc("/s"+string(rune('a'+i))+".js", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/javascript")
+			w.Write([]byte(`window.__n=(window.__n||0)+1;` +
+				`document.querySelector("#c p").textContent="n="+window.__n;`))
+		})
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	情形 := []struct{ 名, 开, 闭 string }{
+		{"小写", `<script src="/s`, `.js"></script>`},
+		{"标签大写", `<SCRIPT SRC="/s`, `.js"></SCRIPT>`},
+		{"混合大小写", `<ScRiPt src="/s`, `.js"></ScRiPt>`},
+	}
+	for _, c := range 情形 {
+		var b strings.Builder
+		b.WriteString(`<!DOCTYPE html><html lang="zh"><head><title>上限</title></head><body>` +
+			`<article id="c"><p>原文本</p></article>`)
+		for i := 0; i < 12; i++ {
+			b.WriteString(c.开 + string(rune('a'+i)) + c.闭)
+		}
+		b.WriteString(`</body></html>`)
+
+		res, err := Render(b.String(), srv.URL+"/p", 测试选项())
+		if err != nil {
+			t.Fatalf("%s 渲染失败: %v", c.名, err)
+		}
+		if !strings.Contains(res.Text, "n=10") {
+			t.Errorf("%s:应当恰好执行 %d 个外链脚本,实际正文 %q(scriptErrs=%v)",
+				c.名, maxScriptSrcCount, res.Text, res.ScriptErrs)
+		}
+	}
+}
+
+// Test大写属性名的外链脚本照常执行 —— 同一个早退 bug 的另一面。
+// 属性名本来就大小写不敏感(属性值 用 EqualFold),<SCRIPT SRC="x.js"> 在浏览器里
+// 会执行;而早退是大小写敏感的,于是它以前【既不执行、也不报错】—— 静默丢内容。
+func Test大写属性名的外链脚本照常执行(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ok.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Write([]byte(`document.querySelector("#c p").textContent = "大写标签的脚本跑过了";`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	for _, 标签 := range []string{
+		`<SCRIPT SRC="/ok.js"></SCRIPT>`,
+		`<ScRiPt sRc="/ok.js"></ScRiPt>`,
+		`<script SRC="/ok.js"></script>`,
+	} {
+		html := `<!DOCTYPE html><html lang="zh"><head><title>大写</title></head><body>` +
+			`<article id="c"><p>原文本</p></article>` + 标签 + `</body></html>`
+		res, err := Render(html, srv.URL+"/p", 测试选项())
+		if err != nil {
+			t.Fatalf("%s 渲染失败: %v", 标签, err)
+		}
+		if !strings.Contains(res.Text, "大写标签的脚本跑过了") {
+			t.Errorf("%s:标签名/属性名的大小写不该让脚本静默不执行,正文=%q(scriptErrs=%v)",
+				标签, res.Text, res.ScriptErrs)
+		}
+	}
+}
+

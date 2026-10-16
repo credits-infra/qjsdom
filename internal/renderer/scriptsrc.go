@@ -36,7 +36,13 @@ const (
 // 取不到的保持原样(原样意味着 runner 会跳过它,与改造前的行为一致),
 // 并在提示里说明原因 —— 失败必须带原因,否则"这个页面脚本没跑"没法查。
 func 展开外部脚本(html, pageURL string, opt Options) (string, []string) {
-	if !strings.Contains(html, "<script") {
+	// ⚠️ 早退必须用同一个正则(它是 (?is) 的),不能用 strings.Contains(html, "<script"):
+	// HTML 解析器对标签名不区分大小写,而小写包含判断会让写成 <SCRIPT src=...> /
+	// <ScRiPt src=...> 的页面【整个外链脚本能力静默失效】—— 既不内联、连一条 note 都没有。
+	// 实测后果(第三轮复核):① 12 个 <ScRiPt src> 时,超过数量上限的第 11、12 个照跑
+	// (正文 n=12,而文档承诺最多 10 个);② <SCRIPT SRC="x.js"> 完全不执行也不报错,
+	// 而属性名本身大小写不敏感(属性值 用 EqualFold),本该正常执行。
+	if !外链脚本正则.MatchString(html) {
 		return html, nil
 	}
 
@@ -159,6 +165,13 @@ func 防截断(code string) string {
 	return 正则结束标签.ReplaceAllString(code, `<\/script`)
 }
 
+// 正则标签头 定位 <script 标签名的结尾,供 标记跳过 插属性用。
+// ⚠️ 必须大小写不敏感:标签匹配是 (?is) 的,页面写 `<SCRIPT` / `<ScRiPt` 一样会被
+// Go 侧跳过。若这里用小写敏感的查找,标记就打不上,JS 侧的分轮执行会把这些
+// "已判定不执行"的标签重新取回来 —— 而没有标记时 JS 侧只校验状态/类型/大小,
+// 【不校验"超过数量上限"】,第 11 个之后的脚本因此会照跑。
+var 正则标签头 = regexp.MustCompile(`(?i)<\s*script`)
+
 // 标记跳过 给"不再执行"的 <script> 打个标记,原因用短标识(不塞 URL —— 那会
 // 让属性值变得难读,而且 URL 本身已经在 scriptErrs 里点名了)。
 //
@@ -168,12 +181,13 @@ func 防截断(code string) string {
 // 第三轮交叉评审实测:404 的 JS 体与超上限脚本的前缀都被重新执行了,而 scriptErrs
 // 同时写着"取不到",输出自相矛盾。判定的归属必须唯一:Go 侧说了不执行就不执行。
 //
+// 标记本身不区分原因的大小写,JS 侧只看"有没有";具体原因在 scriptErrs 里点名。
 func 标记跳过(tag, 原因 string) string {
-	i := strings.Index(tag, "<script")
-	if i < 0 {
+	loc := 正则标签头.FindStringIndex(tag)
+	if loc == nil {
 		return tag
 	}
-	j := i + len("<script")
+	j := loc[1]
 	return tag[:j] + ` data-qjsdom-skip="` + 标签转义(原因) + `"` + tag[j:]
 }
 
