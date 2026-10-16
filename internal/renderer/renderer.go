@@ -374,6 +374,14 @@ func buildRunner(html, pageURL string, opt Options, phase string) string {
 	// JS 侧取回的外链脚本(只可能是 document.write 注入的)也要守同一条上限 ——
 	// 数字从 Go 传过去,免得两处各写一个 512KB。
 	s = strings.ReplaceAll(s, "__MAX_SCRIPT_BYTES__", strconv.Itoa(maxScriptSrcBytes))
+	// 页面脚本看到的 UA 与抓取用的 UA 必须是同一个值 —— 否则同一个进程里
+	// "页面以为你是谁"和"服务器看到你是谁"不一致。
+	ua := opt.FetchOptions.UserAgent
+	if ua == "" {
+		ua = fetcher.DefaultOptions().UserAgent
+	}
+	uaLit, _ := json.Marshal(ua)
+	s = strings.ReplaceAll(s, "__USER_AGENT__", string(uaLit))
 	return s
 }
 

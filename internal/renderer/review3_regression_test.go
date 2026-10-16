@@ -181,3 +181,47 @@ func Test大写属性名的外链脚本照常执行(t *testing.T) {
 	}
 }
 
+// Test页面脚本看到的UA与抓取一致 —— 第三轮评审 A5(低)的加严版。
+//
+// 症状:page_runner 用 `globalThis.navigator = {...}` 给页面脚本设 UA,而 linkedom
+// 把 navigator 定义成只读访问器属性 —— 赋值静默失效(实测页面脚本读到的是引擎默认的
+// quickjs-ng/0.10.1,language 是 undefined)。而且它与抓取用的 UA 是两套值。
+// 这里把"一致性"本身钉住:页面脚本读到的 UA,必须等于我们真正发出去的 UA。
+func Test页面脚本看到的UA与抓取一致(t *testing.T) {
+	var 抓取UA string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/whoami.json", func(w http.ResponseWriter, r *http.Request) {
+		抓取UA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"ok":true}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	html := `<!DOCTYPE html><html lang="zh"><head><title>UA</title></head><body>
+<article id="c"><p>原文本</p>
+<script>
+fetch('/whoami.json').then(function (r) { return r.json(); }).then(function () {
+  document.querySelector('#c p').textContent =
+    '页面UA=' + String(navigator.userAgent) + ' 语言=' + String(navigator.language);
+});
+</script>
+</article></body></html>`
+
+	res, err := Render(html, srv.URL+"/p", 测试选项())
+	if err != nil {
+		t.Fatalf("渲染失败: %v", err)
+	}
+	if 抓取UA == "" {
+		t.Fatalf("页面脚本没发出请求,这轮测不到一致性(正文=%q errs=%v)", res.Text, res.ScriptErrs)
+	}
+	if !strings.Contains(res.Text, "页面UA="+抓取UA) {
+		t.Errorf("页面脚本看到的 UA 与抓取用的 UA 不一致:正文=%q 抓取UA=%q", res.Text, 抓取UA)
+	}
+	if strings.Contains(res.Text, "quickjs-ng") {
+		t.Errorf("暴露了引擎身份(赋值没生效):%q", res.Text)
+	}
+	if !strings.Contains(res.Text, "语言=zh-CN") {
+		t.Errorf("navigator.language 没设上:%q", res.Text)
+	}
+}

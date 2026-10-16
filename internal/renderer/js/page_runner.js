@@ -14,7 +14,30 @@
   assign("window", globalThis);
   assign("self", globalThis);
   assign("top", globalThis);
-  assign("navigator", { userAgent: "Mozilla/5.0 (compatible; qjsdom/0.1)", language: "zh-CN" });
+  // navigator 得单独处理:linkedom 把它定义成【只读的访问器属性】,`globalThis.navigator = {...}`
+  // 会静默失效 —— 实测页面脚本读到的仍是引擎默认值(UA = quickjs-ng/0.10.1、language = undefined),
+  // 与我们想给的完全不符。改成在现有对象上逐属性 defineProperty 覆盖(不触发 setter,
+  // 也就避开了"setter 内部引用未 stub 的 API"那个坑)。
+  // UA 由 Go 侧传入(__USER_AGENT__),与抓取用的 UA 是同一个值 —— 页面脚本看到的身份
+  // 不该和实际请求的身份不一致。
+  (function () {
+    const 覆盖 = (对象, 名, 值) => {
+      try {
+        Object.defineProperty(对象, 名, { value: 值, configurable: true, writable: true });
+      } catch (e) { /* 覆盖不了就保持原样,绝不中断整页 */ }
+    };
+    let 目标 = null;
+    try { 目标 = globalThis.navigator; } catch (e) { 目标 = null; }
+    if (!目标) {
+      目标 = {};
+      try {
+        Object.defineProperty(globalThis, "navigator",
+          { value: 目标, configurable: true, writable: true });
+      } catch (e) { /* 定义不了就只能算了 */ }
+    }
+    覆盖(目标, "userAgent", __USER_AGENT__);
+    覆盖(目标, "language", "zh-CN");
+  })();
   assign("location", { href: __URL__, toString() { return __URL__; } });
 })();
 
