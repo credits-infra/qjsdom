@@ -162,12 +162,7 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), opt.Timeout)
 	defer cancel()
 
-	client := &http.Client{
-		Timeout: opt.Timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return 检查跳转(req, via, opt)
-		},
-	}
+	client := 建客户端(opt, opt.Timeout)
 
 	// 重试时需要重新构造请求(已发出的请求 Body 已被消费),
 	// 所以把「造请求」这件事包成闭包交给 doWithRetry。
@@ -264,6 +259,28 @@ func fetchLocalFile(u *url.URL, opt Options) (*Result, error) {
 		Elapsed:    time.Since(start),
 		Truncated:  truncated,
 	}, nil
+}
+
+// 新逐跳守卫客户端 是抓取/探测/下载三处共用的 http.Client 构造点,带逐跳 SSRF 校验。
+//
+// 抽成具名函数只为一件事:可测 —— 而且是"钩子有没有装上"这一层的可测。
+// 第四轮交叉评审用变异演示过:把三处的 CheckRedirect 分别换成 return nil,全仓库测试
+// 依然全绿(原先只测了 检查跳转 本身,没人测它有没有被挂上去)。
+// 建客户端 是三处出站(抓取 / 图片探测 / 图片下载)构造 http.Client 的唯一入口 ——
+// 逐跳 SSRF 校验就挂在它返回的 CheckRedirect 上。
+//
+// 做成可变变量是给测试留的一条缝:测试替换它就能拿到"这条通路实际用的客户端",
+// 从而验证钩子真的装上了。没有这条缝时,把某处的 CheckRedirect 删掉不会有任何
+// 测试变红(第四轮交叉评审的 X6/X7/X8 三个变异演示过)。
+var 建客户端 = 新逐跳守卫客户端
+
+func 新逐跳守卫客户端(opt Options, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return 检查跳转(req, via, opt)
+		},
+	}
 }
 
 // 检查跳转 是 http.Client.CheckRedirect 的实现,抽成具名函数只为一件事:可测。

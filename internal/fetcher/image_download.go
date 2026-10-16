@@ -128,18 +128,7 @@ func fetchImageData(rawURL string, opt Options, maxBytes int64) ([]byte, ImageFi
 		maxBytes = 5 << 20
 	}
 
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("重定向次数过多")
-			}
-			if !opt.AllowPrivate {
-				return guardSSRF(req.URL.Hostname())
-			}
-			return nil
-		},
-	}
+	client := 建客户端(opt, timeout)
 
 	// 图片下载同样走重试:连续下载多张时最容易碰到 429。
 	build := func() (*http.Request, error) {

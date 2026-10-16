@@ -70,18 +70,7 @@ func ProbeImage(rawURL string, opt Options) ImageInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("重定向次数过多")
-			}
-			if !opt.AllowPrivate {
-				return guardSSRF(req.URL.Hostname())
-			}
-			return nil
-		},
-	}
+	client := 建客户端(opt, timeout)
 
 	// 尺寸探测也走重试 —— 它同样会碰到限流,而返回假尺寸会让页面脚本
 	// 走进错误分支。
