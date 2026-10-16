@@ -31,6 +31,9 @@ qjsdom -mode links "https://html.duckduckgo.com/html/?q=glycolysis"
 
 # Save the page's images so a model can look at them
 qjsdom -download-images -images-dir /tmp/imgs https://example.com
+
+# Get the article as Markdown, keeping headings, lists, and tables
+qjsdom -markdown -mode article https://en.wikipedia.org/wiki/Glycolysis
 ```
 
 `-mode` picks the extraction strategy. Use `article` for articles and

@@ -29,6 +29,7 @@ func main() {
 		selector     = flag.String("selector", "", "正文容器 CSS 选择器(对 all/article 生效)")
 		maxLen       = flag.Int("max", 0, "正文截断长度,0=不截断")
 		asJSON       = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
+		markdown     = flag.Bool("markdown", false, "输出 Markdown(保留标题/列表/表格等结构)")
 		filePath     = flag.String("file", "", "渲染本地 HTML 文件,不联网")
 		noScripts    = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
 		noImages     = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
@@ -137,6 +138,7 @@ func main() {
 		Mode:           renderer.ParseMode(*modeFlag),
 		Selector:       *selector,
 		MaxTextLen:     *maxLen,
+		Markdown:       *markdown,
 		RunScripts:     !*noScripts,
 		DisableImages:  *noImages,
 		FetchOptions:   fetchOpts,
@@ -152,6 +154,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[render] %s\n", renderer.EngineVersion)
 		fmt.Fprintf(os.Stderr, "[render] 耗时 %.2fs | 脚本 %d/%d 执行成功 | 正文 %d 字\n",
 			out.Elapsed.Seconds(), out.ScriptsRan, out.ScriptTags, out.TextLen)
+		if *markdown {
+			fmt.Fprintf(os.Stderr, "[render] Markdown %d 字\n", len([]rune(out.Markdown)))
+		}
 		if len(out.ScriptErrs) > 0 {
 			fmt.Fprintf(os.Stderr, "[render] 脚本报错 %d 个,前 3 个:\n", len(out.ScriptErrs))
 			for i, e := range out.ScriptErrs {
@@ -204,7 +209,18 @@ func main() {
 		fmt.Println("# " + t)
 		fmt.Println()
 	}
-	fmt.Println(out.Text)
+	if !*markdown {
+		fmt.Println(out.Text)
+		return
+	}
+	if strings.TrimSpace(out.Markdown) == "" {
+		// 转换失败时不给一份空输出:退回纯文本并说明原因(renderer 会在
+		// scriptErrs 里留下失败原因,-stats 能看到)。
+		fmt.Fprintln(os.Stderr, "qjsdom: Markdown 转换没有产出内容,已退回纯文本")
+		fmt.Println(out.Text)
+		return
+	}
+	fmt.Println(out.Markdown)
 }
 
 func fatal(format string, args ...any) {
