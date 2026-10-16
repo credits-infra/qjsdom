@@ -119,6 +119,11 @@ type Result struct {
 	StatusCode int
 	Bytes      int64
 	Elapsed    time.Duration
+	// Header 是响应头(跟随重定向后那一次的)。给页面脚本里的 fetch 用 ——
+	// 它会读 content-type 之类的字段来决定怎么解析响应体。
+	Header http.Header
+	// Redirected 表示这次抓取跟随过重定向(fetch 的 Response.redirected)。
+	Redirected bool
 }
 
 // Fetch 抓取 url 并返回 HTML 源码。
@@ -214,6 +219,8 @@ func Fetch(rawURL string, opt Options) (*Result, error) {
 		StatusCode: resp.StatusCode,
 		Bytes:      int64(len(body)),
 		Elapsed:    time.Since(start),
+		Header:     resp.Header,
+		Redirected: finalURL != u.String(),
 	}, nil
 }
 

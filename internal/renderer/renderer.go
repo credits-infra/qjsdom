@@ -21,6 +21,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -39,6 +40,9 @@ var pageRunner string
 
 //go:embed js/image_fetch.js
 var imageFetch string
+
+//go:embed js/fetch_shim.js
+var fetchShim string
 
 //go:embed assets/linkedom.core.js
 var linkedomBundle string
@@ -101,6 +105,13 @@ type Options struct {
 	// EnableImages 是否让 `new Image()` 真的去取图片尺寸(默认 true)。
 	// 用「禁用」而非「启用」表达,是为了让 Go 的零值 = 默认开启。
 	DisableImages bool
+	// DisableJSFetch 关掉页面脚本的网络能力(globalThis.fetch / XMLHttpRequest)。
+	// 默认开启:不少页面靠脚本取数据后才把正文渲染出来,没有 fetch 就只能拿到空壳。
+	// 关掉之后页面脚本调用 fetch 会得到 "fetch is not defined",与没有这个能力时一致。
+	DisableJSFetch bool
+	// DisableScriptSrc 关掉 <script src> 的加载(默认开启)。
+	// 默认开:正文常由外链脚本渲染出来,不取这些脚本就只能看到空壳。
+	DisableScriptSrc bool
 	// FetchOptions 供图片探测使用的网络参数。
 	FetchOptions fetcher.Options
 
@@ -149,6 +160,15 @@ type Result struct {
 }
 
 // EngineVersion 供 CLI 打印。
+const (
+	// 页面脚本每页最多发起几次网络请求。死循环里的 fetch 不该把整页拖到超时;
+	// 15 次足够覆盖"取一两个 API 再拼出正文"的常见页面。
+	maxJSFetchPerPage = 15
+	// 页面脚本单次响应的字节上限。这类请求取的多是 JSON,不需要页面级的 4MB 配额 ——
+	// 一页 15 次 × 4MB 就是 60MB,那才是真会打爆内存的地方。
+	maxJSFetchBytes = 1 << 20 // 1MB
+)
+
 const EngineVersion = "qjsdom/0.1 (qjs + linkedom, CGO-free)"
 
 // Render 解析 HTML,执行内联脚本,提取正文。
@@ -169,6 +189,19 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	// 那个脚本靠 typeof __qjsdom_imageProbe 判断网络层是否可用。
 	if !opt.DisableImages {
 		registerImageProbe(ctx, pageURL, opt)
+	}
+
+	// 外链脚本先取回来内联,再交给 runner —— 顺序就是源码里的顺序。
+	var 脚本提示 []string
+	if !opt.DisableScriptSrc {
+		html, 脚本提示 = 展开外部脚本(html, pageURL, opt)
+	}
+
+	// 页面脚本的网络能力(globalThis.fetch / XMLHttpRequest)。在 host_shims
+	// 之后注入 —— shim 里用到 TextEncoder(host_shims 提供)。
+	var 注入提示 string
+	if !opt.DisableJSFetch {
+		注入提示 = registerJSFetch(ctx, pageURL, opt)
 	}
 
 	if _, err := ctx.Eval("host_shims.js", qjs.Code(hostShims)); err != nil {
@@ -209,6 +242,10 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 		return nil, fmt.Errorf("结果解析失败(%v): %s", err, truncate(raw, 300))
 	}
 
+	out.ScriptErrs = append(out.ScriptErrs, 脚本提示...)
+	if 注入提示 != "" {
+		out.ScriptErrs = append(out.ScriptErrs, 注入提示)
+	}
 	if !opt.RunScripts {
 		// RunScripts=false 时,page_runner 依然会跑;这里只用于标注
 		out.ScriptErrs = append(out.ScriptErrs, "note: RunScripts=false 尚未实现,脚本仍然执行了")
@@ -361,6 +398,102 @@ func registerImageProbe(ctx *qjs.Context, pageURL string, opt Options) {
 		}
 		return c.NewString(string(b)), nil
 	})
+}
+
+// registerJSFetch 把网络能力交给页面脚本(globalThis.fetch / XMLHttpRequest)。
+//
+// 走的是【与抓页面完全相同的那条通路】:fetcher.Fetch —— 协议白名单、SSRF 守卫、
+// 大小上限、超时、重定向逐跳检查一个都不少。页面脚本不该拥有一条绕过守卫的捷径,
+// 否则"页面能读什么"就等于"攻击者的 JS 能扫什么"。
+//
+// 三条限制(都在实测里用过):
+//   - 只放行 GET —— POST/PUT 是"用我们的服务器向第三方发写请求",默认不给;
+//   - 每页次数上限 —— 一个死循环里的 fetch 不该把整页拖到超时;
+//   - 单次响应字节上限 —— 页面脚本取的多是 JSON,不需要 4MB 的页面级配额。
+//
+// 返回值为非空时表示有需要注意的情况(shim 注入失败),由调用方记进 scriptErrs。
+func registerJSFetch(ctx *qjs.Context, pageURL string, opt Options) string {
+	fo := opt.FetchOptions
+	if fo.UserAgent == "" {
+		fo = fetcher.DefaultOptions()
+	}
+	// 页面脚本自己的请求不该拖垮整页
+	if fo.Timeout <= 0 || fo.Timeout > 10*time.Second {
+		fo.Timeout = 10 * time.Second
+	}
+	if fo.MaxBytes <= 0 || fo.MaxBytes > maxJSFetchBytes {
+		fo.MaxBytes = maxJSFetchBytes
+	}
+
+	var base *url.URL
+	if pageURL != "" {
+		base, _ = url.Parse(pageURL)
+	}
+
+	剩余 := maxJSFetchPerPage
+	ctx.SetFunc("__qjsdom_httpFetch", func(this *qjs.This) (*qjs.Value, error) {
+		c := this.Context()
+		args := this.Args()
+		if len(args) == 0 {
+			return c.NewString(`{"error":"缺少 url 参数"}`), nil
+		}
+		raw := strings.TrimSpace(args[0].String())
+		method := "GET"
+		if len(args) > 1 {
+			method = strings.ToUpper(strings.TrimSpace(args[1].String()))
+		}
+		if method != "GET" {
+			return c.NewString(错误JSON("只支持 GET 请求(收到 " + method + ")")), nil
+		}
+		if 剩余 <= 0 {
+			return c.NewString(错误JSON(fmt.Sprintf(
+				"本页页面脚本发起的请求已达上限(%d),后续请求不再转发", maxJSFetchPerPage))), nil
+		}
+		剩余--
+
+		// 相对地址按页面地址补全 —— 与浏览器一致,也是页面脚本默认的写法
+		abs := raw
+		if base != nil {
+			if u, err := url.Parse(raw); err == nil {
+				abs = base.ResolveReference(u).String()
+			}
+		}
+
+		res, err := fetcher.Fetch(abs, fo)
+		if err != nil {
+			return c.NewString(错误JSON(err.Error())), nil
+		}
+		hdr := map[string]string{}
+		for k, v := range res.Header {
+			hdr[strings.ToLower(k)] = strings.Join(v, ", ")
+		}
+		b, err := json.Marshal(map[string]any{
+			"status":     res.StatusCode,
+			"statusText": http.StatusText(res.StatusCode),
+			"url":        res.URL,
+			"redirected": res.Redirected,
+			"headers":    hdr,
+			"body":       res.HTML,
+		})
+		if err != nil {
+			return c.NewString(错误JSON("响应编码失败")), nil
+		}
+		return c.NewString(string(b)), nil
+	})
+
+	if _, err := ctx.Eval("fetch_shim.js", qjs.Code(fetchShim)); err != nil {
+		// shim 注入失败不该让整页失败:页面脚本拿不到 fetch,但正文照旧能抽。
+		return fmt.Sprintf("note: fetch shim 注入失败: %v", err)
+	}
+	return ""
+}
+
+func 错误JSON(msg string) string {
+	b, err := json.Marshal(map[string]string{"error": msg})
+	if err != nil {
+		return `{"error":"错误信息编码失败"}`
+	}
+	return string(b)
 }
 
 func truncate(s string, n int) string {

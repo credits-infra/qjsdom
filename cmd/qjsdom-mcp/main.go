@@ -18,6 +18,8 @@
 //	QJSDOM_MIN_IMAGE_SIDE   图片最小边长,小于此值视为图标丢弃(默认 100)
 //	QJSDOM_MIN_IMAGE_BYTES  图片最小字节数(默认 5120)
 //	QJSDOM_MAX_IMAGE_BYTES  单张图片字节上限(默认 2MB)
+//	QJSDOM_JS_FETCH         页面脚本能否联网,即 fetch/XMLHttpRequest(默认 1;设 0 关闭)
+//	QJSDOM_SCRIPT_SRC       是否加载 <script src> 外部脚本(默认 1;设 0 关闭)
 //	QJSDOM_DEBUG            设为 1 时把诊断信息写到 stderr
 package main
 
@@ -61,6 +63,10 @@ type config struct {
 	allowSchemes []string
 	// maxConcurrency 是同时处理的页面请求上限(排队容量取其两倍)。
 	maxConcurrency int
+	// jsFetch 是否允许页面脚本联网(fetch / XMLHttpRequest)。
+	jsFetch bool
+	// scriptSrc 是否加载 <script src> 外部脚本。
+	scriptSrc bool
 }
 
 func loadConfig() config {
@@ -74,6 +80,8 @@ func loadConfig() config {
 		minImageSide:   int(envInt64("QJSDOM_MIN_IMAGE_SIDE", 100)),
 		minImageByte:   envInt64("QJSDOM_MIN_IMAGE_BYTES", 5120),
 		maxImageByte:   envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
+		jsFetch:        envBool("QJSDOM_JS_FETCH", true),
+		scriptSrc:      envBool("QJSDOM_SCRIPT_SRC", true),
 		saveImagesDir:  envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
 		debug:          os.Getenv("QJSDOM_DEBUG") == "1",
 		allowSchemes:   fetcher.SplitSchemes(envStr("QJSDOM_ALLOW_SCHEMES", "")),
@@ -235,7 +243,11 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 		Markdown:      要Markdown,
 		RunScripts:    true,
 		DisableImages: true, // 页面脚本的 Image 探测对 MCP 无意义,省掉网络往返
-		FetchOptions:  fo,
+		// 页面脚本的网络能力与 <script src> 默认开着:不少页面靠脚本取数据
+		// 才把正文渲染出来,关掉就只能拿到空壳。可以用 env 关。
+		DisableJSFetch:   !cfg.jsFetch,
+		DisableScriptSrc: !cfg.scriptSrc,
+		FetchOptions:     fo,
 	})
 	if err != nil {
 		return errResult("渲染失败: " + err.Error()), out, nil
@@ -638,6 +650,19 @@ func envDur(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// envBool 只认几个明确的真值,其余(含拼错)一律当假 —— 但默认值由调用方给,
+// 所以"没设"和"设错"要分开:没设用默认,设了但认不出来也只当默认。
+func envBool(key string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return def
 }
 
 func envInt64(key string, def int64) int64 {

@@ -33,6 +33,8 @@ func main() {
 		filePath     = flag.String("file", "", "渲染本地 HTML 文件,不联网")
 		noScripts    = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
 		noImages     = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
+		noJSFetch    = flag.Bool("no-js-fetch", false, "不让页面脚本联网(关掉 fetch / XMLHttpRequest)")
+		noScriptSrc  = flag.Bool("no-script-src", false, "不加载 <script src> 外部脚本")
 		dlImages     = flag.Bool("download-images", false, "下载页面图片到 -images-dir(交给模型看)")
 		imgDir       = flag.String("images-dir", "", "图片保存目录(配合 -download-images)")
 		maxImages    = flag.Int("max-images", 20, "最多下载几张图片")
@@ -135,16 +137,18 @@ func main() {
 	}
 
 	out, err := renderer.Render(html, pageURL, renderer.Options{
-		Mode:           renderer.ParseMode(*modeFlag),
-		Selector:       *selector,
-		MaxTextLen:     *maxLen,
-		Markdown:       *markdown,
-		RunScripts:     !*noScripts,
-		DisableImages:  *noImages,
-		FetchOptions:   fetchOpts,
-		DownloadImages: *dlImages,
-		ImagesDir:      *imgDir,
-		ImageLimits:    fetcher.DownloadLimits{MaxImages: *maxImages},
+		Mode:             renderer.ParseMode(*modeFlag),
+		Selector:         *selector,
+		MaxTextLen:       *maxLen,
+		Markdown:         *markdown,
+		RunScripts:       !*noScripts,
+		DisableImages:    *noImages,
+		DisableJSFetch:   *noJSFetch,
+		DisableScriptSrc: *noScriptSrc,
+		FetchOptions:     fetchOpts,
+		DownloadImages:   *dlImages,
+		ImagesDir:        *imgDir,
+		ImageLimits:      fetcher.DownloadLimits{MaxImages: *maxImages},
 	})
 	if err != nil {
 		fatal("渲染失败: %v", err)
