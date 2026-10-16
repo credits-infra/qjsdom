@@ -63,6 +63,10 @@ worth sending it returns them as image content blocks. A model that accepts
 images sees the figures directly, so charts and diagrams come through without the
 caller reading anything from disk.
 
+Pass `format: "markdown"` to get the page as Markdown instead of plain text.
+Headings, lists, links, and tables survive the conversion, and relative links
+become absolute when the page has an http(s) address. The default is `text`.
+
 Environment variables:
 
 | Variable | Default | Purpose |

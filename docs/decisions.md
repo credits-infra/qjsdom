@@ -240,6 +240,30 @@ Current output names each failing URL and why, which is how I learned that one o
 them was not a failure at all: MediaWiki uses an `<img>` tag for an auto-login
 probe, and the code was correctly rejecting it by content type.
 
+## Let a library convert HTML to Markdown
+
+The Markdown output is `github.com/JohannesKaufmann/html-to-markdown/v2`, wrapped
+by `internal/markdown`. Writing that converter here was never on the table: the
+work is entirely edge cases — nested lists, tables, backticks inside code blocks,
+inline elements inside a word, which characters need escaping — and each one is a
+bug report waiting to happen. The library is pure Go with no CGO, adds two
+dependencies, and costs about 670 KB of binary.
+
+The conversion runs on the Go side, not in the page runner. The runner already
+builds the rendered DOM, so it hands back the HTML of the content container and
+Go converts it. Both outputs therefore come from the same container, and neither
+language carries a second set of conversion rules.
+
+Two measurements shaped the wiring. Converting a 441 KB Wikipedia page takes 45 ms,
+which is noise next to a render of several seconds; and serialising the container
+costs real bytes, so it happens only when the caller asks for Markdown
+(`__NEED_HTML__`), which also keeps `-json` from growing by the size of the page.
+
+The one trap found by testing: relative links resolve against the page address, and
+a `file://` base produces `http://file:/wiki/x` — an address nobody can open. Only
+http(s) page addresses take part in link resolution now; anything else keeps the
+relative link as it stands, matching what the plain-text link list already shows.
+
 ## Guard against SSRF
 
 This component ends up exposed to a chat group where anyone can trigger a fetch.
