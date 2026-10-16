@@ -16,6 +16,7 @@ import (
 	"mime"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding/htmlindex"
 	"golang.org/x/text/encoding/unicode"
@@ -113,7 +114,54 @@ func 按名解码(名 string, b []byte) (string, bool) {
 	return 出, true
 }
 
-// 未声明时解码 没声明就猜。这一步在下一个提交里补全试探顺序。
+// 未声明时解码 头和 meta 都没说、也没有 BOM,只能猜。
+//
+// 猜的顺序按"猜错有多难看"排,不按规范:
+//
+//  1. 字节本身是合法 UTF-8 —— 直接就是答案,今天的页面绝大多数如此;
+//  2. 非法 UTF-8 但字节结构像 GBK 汉字 —— 按 GB18030 解(GBK 的超集)。
+//     中文老站点不声明编码是常态,而按规范退回 windows-1252 只会给出一页乱码;
+//  3. 其余按 windows-1252 —— 西欧页面的通行默认。
+//
+// 实测对照(同一页,不声明编码):chromium 两种都猜对(它有自己的探测与地区默认),
+// qjsdom / httpx / happy-dom 改前两种都塌。这一步做完,前两种我们和 chromium 齐平。
+//
+// 边界:未声明的 Big5 与 Shift_JIS 不在这里猜 —— 它们的双字节结构与 GBK 不重叠,
+// 硬猜会把港台与日文页面解坏,不如老实退回 UTF-8/西欧默认并把结论报出去。
 func 未声明时解码(b []byte) (string, Charset) {
-	return strings.ToValidUTF8(string(b), "\uFFFD"), Charset{Name: "utf-8", Source: "未声明(按 UTF-8)"}
+	if utf8.Valid(b) {
+		return string(b), Charset{Name: "utf-8", Source: "未声明(按 UTF-8)"}
+	}
+	if 像GBK汉字(b) {
+		if 文本, ok := 按名解码("gb18030", b); ok {
+			return 文本, Charset{Name: "gb18030", Source: "未声明(推断:简体中文)"}
+		}
+	}
+	if 文本, ok := 按名解码("windows-1252", b); ok {
+		return 文本, Charset{Name: "windows-1252", Source: "未声明(推断:西欧)"}
+	}
+	return strings.ToValidUTF8(string(b), "\uFFFD"), Charset{Name: "utf-8", Source: "未声明(兜底)"}
+}
+
+// 像GBK汉字 判断这串字节像不像 GBK/GB18030 的双字节汉字。
+//
+// 为什么不直接看"解出来是不是汉字":GB18030 能把任意字节序列解成一片汉字,
+// 西欧页面(每个重音字母一个高位字节)也能解成"像汉字的东西",那样判必然误伤。
+// 结构判据硬得多:GBK 常用汉字(GB2312 一级字区,覆盖日常用字的绝大多数)是
+// 首字节 0xB0-0xF7 配 尾字节 0xA1-0xFE 的两个字节成对出现;而西欧重音字母
+// (如 é=0xE9)后面跟的是 ASCII 字母或空格,配不成对。
+func 像GBK汉字(b []byte) bool {
+	高, 成对 := 0, 0
+	for i := 0; i < len(b); i++ {
+		if b[i] < 0x80 {
+			continue
+		}
+		高++
+		if i+1 < len(b) && b[i] >= 0xB0 && b[i] <= 0xF7 && b[i+1] >= 0xA1 && b[i+1] <= 0xFE {
+			成对 += 2
+			i++
+		}
+	}
+	// 样本太少不判(一个孤立的 0xE9 也可能碰巧成对),够多才认七成以上
+	return 高 >= 4 && 成对*10 >= 高*7
 }

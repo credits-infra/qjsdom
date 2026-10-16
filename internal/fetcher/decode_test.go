@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode"
 
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/encoding/traditionalchinese"
 )
@@ -122,5 +124,54 @@ func Test抓取时按声明解码(t *testing.T) {
 	}
 	if res.Charset.Name != "gbk" || res.Charset.Source != "响应头" {
 		t.Errorf("结论应随结果一起给出,实际 %+v", res.Charset)
+	}
+}
+
+func to1252(t *testing.T, 文本 string) []byte {
+	t.Helper()
+	出, err := charmap.Windows1252.NewEncoder().String(文本)
+	if err != nil {
+		t.Fatalf("windows-1252 编码失败: %v", err)
+	}
+	return []byte(出)
+}
+
+// 未声明编码的 GBK 页面 —— 中文老站点的常态。改前整页乱码(chromium 能猜对,
+// 它有自己的编码探测;我们靠字节结构猜)。
+func Test未声明时推断简体中文(t *testing.T) {
+	体 := GBK(t, "<html><body><p>"+中文句+"</p></body></html>")
+	文本, 结论 := DecodeHTML(体, "")
+	if !strings.Contains(文本, 中文句) {
+		t.Errorf("未声明的 GBK 页没解对: %+v", 结论)
+	}
+	if 结论.Name != "gb18030" || 结论.Source != "未声明(推断:简体中文)" {
+		t.Errorf("结论应为推断简体中文,实际 %+v", 结论)
+	}
+}
+
+// 同样未声明的西欧页面:必须走 windows-1252,不能被 GB18030 解成一片假汉字。
+// 这条是上面那个结构判据的判别力所在 —— 只看"解出来是不是汉字"会在这里翻车。
+func Test未声明时推断西欧(t *testing.T) {
+	原文 := "<html><body><p>Le métabolisme dégrade le glucose; la glycolyse est très efficace.</p></body></html>"
+	体 := to1252(t, 原文)
+	文本, 结论 := DecodeHTML(体, "")
+	if !strings.Contains(文本, "métabolisme dégrade le glucose") {
+		t.Errorf("西欧页被解坏了: %+v, 正文 %q", 结论, 文本)
+	}
+	if 结论.Name != "windows-1252" {
+		t.Errorf("结论应为 windows-1252,实际 %+v", 结论)
+	}
+	if strings.ContainsFunc(文本, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
+		t.Errorf("西欧页面里不该出现汉字: %q", 文本)
+	}
+}
+
+// 样本太短就不该乱判:一两个孤立高位字节不足以断言"这是简体中文"。
+func Test短样本不乱判(t *testing.T) {
+	if 像GBK汉字([]byte("caf\xe9")) {
+		t.Errorf("三个字节的样本不该被判成 GBK 汉字")
+	}
+	if !像GBK汉字(GBK(t, 中文句)) {
+		t.Errorf("真正的 GBK 中文句应当被判成 GBK 汉字")
 	}
 }
