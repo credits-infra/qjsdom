@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fastschema/qjs"
 
@@ -116,8 +117,9 @@ type Options struct {
 
 // Result 是渲染结果。字段名对应 page_runner.js 的返回 JSON。
 type Result struct {
-	Title      string   `json:"title"`
-	Text       string   `json:"text"`
+	Title string `json:"title"`
+	Text  string `json:"text"`
+	// TextLen 是正文的字符数(renderer 统一算,不是字节)。
 	TextLen    int      `json:"textLen"`
 	ScriptTags int      `json:"scriptTags"`
 	ScriptsRan int      `json:"scriptsRan"`
@@ -202,6 +204,11 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	if opt.MaxTextLen > 0 {
 		out.Text = truncateRunes(out.Text, opt.MaxTextLen)
 	}
+	// TextLen 由这里统一算,别用 JS 侧给的 textLen,也别让入口自己再算一遍:
+	// JS 的 text.length 是 UTF-16 单元,Go 的 len() 是字节 —— 同一个字段两种口径,
+	// 中文页面下差三倍(实测 18 个汉字,两个入口一个报 18 一个报 54)。
+	// 截断按字符计,这里也按字符计,口径才对得上。
+	out.TextLen = utf8.RuneCountInString(out.Text)
 
 	// Markdown 与纯文本取同一份内容(同一个正文容器),截断也走同一套字符口径。
 	if opt.Markdown {

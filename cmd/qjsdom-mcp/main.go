@@ -242,7 +242,9 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 	}
 
 	out.Title = res.Title
-	out.TextLen = len(res.Text)
+	// TextLen 取 renderer 算好的字符数。此前这里用 len(res.Text) 覆盖成字节数,
+	// 而 CLI 打的是同一个字段的字符数 —— 中文页面下两个入口差三倍。
+	out.TextLen = res.TextLen
 	out.Degraded = res.Degraded
 	out.ScriptsRan = fmt.Sprintf("%d/%d", res.ScriptsRan, res.ScriptTags)
 	out.LinksFound = len(res.Links)
