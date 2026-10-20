@@ -31,6 +31,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -196,6 +197,11 @@ func main() {
 
 // handleFetch 完成一次抓取 + 渲染 + 组装内容块。
 func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResult, fetchOut, error) {
+	// 一次渲染会把 Go 堆推到 100MB 量级;MCP 是长驻进程,不主动归还就会一直占着。
+	// 实测 FreeOSMemory 约 1.5~2.5ms,换来的是 dirty 页从 ~128MB 降到 ~25MB。
+	// 放在出口,连图片下载的临时分配一起收;CLI 进程随即退出,不需要这一步。
+	defer debug.FreeOSMemory()
+
 	var out fetchOut
 
 	url := strings.TrimSpace(args.URL)
