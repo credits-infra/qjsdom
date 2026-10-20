@@ -98,10 +98,10 @@ func loadConfig() config {
 // 用来生成工具的 JSON Schema 与描述。
 type fetchArgs struct {
 	URL      string `json:"url" jsonschema:"required. Absolute http(s) URL of the page to read."`
-	Mode     string `json:"mode,omitempty" jsonschema:"Extraction strategy. all (default) returns the whole page text plus its links, losing nothing. article picks the main content container (articles, encyclopedias, docs). links returns just the link list, which is what search results and index pages need."`
-	Selector string `json:"selector,omitempty" jsonschema:"CSS selector naming the content container directly. Use it when article mode picks the wrong container. For Wikipedia, #mw-content-text."`
+	Mode     string `json:"mode,omitempty" jsonschema:"Extraction strategy. all (default) returns the whole page text plus its links. article picks the main content container. links returns just the link list. static parses the HTML without a script runtime and returns whole-body text plus links; it returns no images and does not accept selector."`
+	Selector string `json:"selector,omitempty" jsonschema:"CSS selector naming the content container directly. Use it when article mode picks the wrong container. For Wikipedia, #mw-content-text. Not supported with mode=static."`
 	MaxLen   int    `json:"max_len,omitempty" jsonschema:"Truncate the returned text at this many characters. Counted in characters, so multi-byte text is never cut mid-character. 0 uses the server default."`
-	Images   *bool  `json:"images,omitempty" jsonschema:"Return the page's images as image content blocks so the model can see them. Defaults to true. Small icons are filtered out automatically."`
+	Images   *bool  `json:"images,omitempty" jsonschema:"Return the page's images as image content blocks so the model can see them. Defaults to true. Small icons are filtered out automatically. mode=static returns no images."`
 	Format   string `json:"format,omitempty" jsonschema:"Output format of the page text. markdown keeps headings, lists, links, and tables; text (default) returns plain text. Unknown values fall back to text."`
 }
 
@@ -147,11 +147,14 @@ func main() {
 
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "fetch_page",
-		Description: "Fetch a web page and return its content as text, executing the page's " +
-			"JavaScript first so that script-generated content is included. Runs in-process " +
+		Description: "Fetch a web page and return its content as text. By default it executes " +
+			"the page's JavaScript first so that script-generated content is included; mode=static " +
+			"skips the runtime. Runs in-process " +
 			"with no browser and no Node runtime. Use mode=links for search results and index " +
-			"pages, mode=article for articles and documentation, and the default mode=all when " +
-			"unsure. Page images are returned as image content blocks so you can read " +
+			"pages, mode=article for articles and documentation, mode=static for server-rendered " +
+			"pages that need no script runtime, and the default mode=all when unsure. mode=static " +
+			"returns whole-body text and links only; it returns no images and rejects selector. " +
+			"Page images are returned as image content blocks so you can read " +
 			"illustrations, diagrams, and figures; the text ends with a numbered list giving " +
 			"each image's URL, format, pixel size, and saved path. " +
 			"To search the web, fetch https://html.duckduckgo.com/html/?q=<keywords> with " +
@@ -279,6 +282,9 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 	wantImages := cfg.maxImages > 0
 	if args.Images != nil {
 		wantImages = *args.Images && cfg.maxImages > 0
+	}
+	if mode == renderer.ModeStatic && wantImages {
+		out.Notice = append(out.Notice, "mode=static 不收集图片;需要图片时请用 mode=article 或 mode=all")
 	}
 	if wantImages && len(res.Images) > 0 {
 		imgs, notices := collectImages(cfg, fo, res.Images, url)
