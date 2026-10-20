@@ -103,7 +103,7 @@ Page script execution is partial, and the failures are missing APIs: three of th
 
 `document.write` works, but each call is parsed on its own, so a page cannot split a tag across two calls the way a browser lets it. A write that arrives after the page finished parsing appends to the body instead of clearing the document, and says so in `scriptErrs` — the browser behaviour there destroys content rather than producing it.
 
-Text encoding beyond UTF-8 is not handled. A `gbk` or `gb2312` page comes back mangled until `golang.org/x/text` gets pulled in.
+Text encoding is handled before the renderer sees the page. The fetcher reads a byte order mark, the `Content-Type` header, and a `<meta>` declaration, in that order; when the page declares nothing, it guesses between UTF-8, GB18030, and windows-1252. The renderer always receives UTF-8. [Encodings](../README.md#encodings) has the details and the cases it does not guess.
 
 ## Where to look when something breaks
 
@@ -126,7 +126,6 @@ Before blaming the fetcher for a failed request, check that the target responds 
 ## Roadmap
 
 - Cache compiled bytecode with `Compile()` to cut per-page setup cost
-- Decode `gbk` and `gb2312`
 - Provide `atob` and `btoa`, which the probe above shows are missing; a few pages
 feature-detect them before doing anything
 - Prebuilt binaries and GitHub Releases, for people who do not have Go
