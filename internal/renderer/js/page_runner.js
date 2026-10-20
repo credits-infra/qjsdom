@@ -325,6 +325,10 @@
     const NEED_HTML = __NEED_HTML__;
 
     const normText = (s) => String(s || "")
+      // HTML 解析器会把 CRLF 归一成 LF;linkedom 的 textContent 保留原文。
+      // 不归一的话,同一条链接标题在静态路径与 JS 路径上会差一个 \r,
+      // 正文的 textLen 也会被换行符放大。
+      .replace(/\r\n?/g, "\n")
       .replace(/[ \t\u00a0]+/g, " ")
       .replace(/\n\s*\n\s*\n+/g, "\n\n")
       .trim();
@@ -382,9 +386,14 @@
         for (const a of document.querySelectorAll("a[href]")) {
           const h = a.getAttribute("href");
           if (!h || h.startsWith("#") || h.startsWith("javascript:")) continue;
-          const t = normText(a.textContent || "").replace(/\n+/g, " ");
-          // 过滤掉纯图标链接与超长文本(后者多半是整段包裹在 <a> 里的导航)
-          if (!t || t.length < 2 || t.length > 300) continue;
+          // 标题和地址一样要解实体:linkedom 的 textContent 会留下 `&amp;`,
+          // 而静态路径的解析器已经解过;两条路径必须给出同一个标题。
+          const t = decodeEntities(normText(a.textContent || "")).replace(/\n+/g, " ");
+          // 过滤掉纯图标链接与超长文本(后者多半是整段包裹在 <a> 里的导航)。
+          // 用码点而不是 UTF-16 单元计数:静态路径用 utf8.RuneCountInString,
+          // 一个 emoji 在两边都该算 1 个字,而不是 JS 的 length 算 2。
+          const 标题长度 = Array.from(t).length;
+          if (!t || 标题长度 < 2 || 标题长度 > 300) continue;
           const url = cleanURL(h);
           if (!url) continue;
           out.push({ title: t, url: url });
