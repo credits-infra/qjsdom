@@ -114,6 +114,10 @@ The 1000-character difference is the navigation. Documenting this boundary and o
 
 Only verified selectors appear in the documentation. Writing down a selector I have not run would be inventing it.
 
+### The server can set a default, the caller still chooses
+
+MCP is long-lived and each deployment has its own memory budget and page mix, so the operator can set `QJSDOM_DEFAULT_MODE=all|static`. This is a fallback for calls that omit `mode`, not a page heuristic: qjsdom never inspects the page to choose, and an explicit `mode` always wins. Only `all` and `static` are accepted because those answer whether this deployment starts the runtime by default. `article` and `links` are per-call intent, and a global default of either would make every unspecified call narrower.
+
 ## Keep the images
 
 I initially wrote that images were not worth returning because a model cannot see them. That was wrong, and the user corrected me. Models accept image input, and for textbook material the figures carry the content: the values, the arrows, the direction of flow, the regulatory relationships.

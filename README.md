@@ -71,6 +71,8 @@ Pass `format: "markdown"` to get the page as Markdown instead of plain text. Hea
 
 `mode: "static"` parses the HTML without the script runtime and returns whole-body text and links. It does not return images and does not accept `selector`; use `article` or `all` when you need either.
 
+Set `QJSDOM_DEFAULT_MODE=static` to make static the server default. The tool description reports the effective default, and an explicit `mode` always wins.
+
 Environment variables:
 
 | Variable | Default | Purpose |
@@ -80,6 +82,7 @@ Environment variables:
 | `QJSDOM_CACHE_MAX` | 64 MB | Cache size cap |
 | `QJSDOM_TIMEOUT` | `20s` | Fetch timeout |
 | `QJSDOM_MAX_TEXT` | `60000` | Truncate the text at this many characters. Counted in characters, not bytes |
+| `QJSDOM_DEFAULT_MODE` | `all` | Mode used when the caller omits `mode`. `all` runs page scripts; `static` skips the runtime and returns text and links only. An explicit `mode` always wins |
 | `QJSDOM_MAX_IMAGES` | `5` | Images per response. `0` returns none |
 | `QJSDOM_MIN_IMAGE_SIDE` | `100` | Shorter side of an image that has known dimensions. An image at or below this on either side counts as an icon and is dropped |
 | `QJSDOM_MIN_IMAGE_BYTES` | `5120` | Applied only when the dimensions cannot be read, such as for SVG |

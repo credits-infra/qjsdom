@@ -33,6 +33,8 @@ The qjs renderer holds no DOM logic. It loads JavaScript, hands the page over, a
 
 `mode=static` bypasses the renderer. It parses the HTML with `golang.org/x/net/html`, removes `script`, `style`, `noscript`, and `template`, and returns whole-body text and links. It does not create a qjs runtime, execute scripts, select an article container, or collect images. `selector` and `download-images` are rejected with this mode. Static text follows the HTML parser, so character references are decoded and CRLF is normalized; the script path's `textContent` can keep `&amp;` and `\r`.
 
+The MCP server reads `QJSDOM_DEFAULT_MODE` (`all` or `static`) to choose the mode for calls that omit it. The tool description is generated from that value, so a static-default server does not claim to run scripts by default. An explicit mode always wins, and `article` and `links` are not accepted as defaults because they describe per-call intent.
+
 ## Packages
 
 | Package | Responsibility |
