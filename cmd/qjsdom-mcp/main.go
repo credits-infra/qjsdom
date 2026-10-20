@@ -155,11 +155,13 @@ func main() {
 			"illustrations, diagrams, and figures; the text ends with a numbered list giving " +
 			"each image's URL, format, pixel size, and saved path. " +
 			"To search the web, fetch https://html.duckduckgo.com/html/?q=<keywords> with " +
-			"mode=links, then open one of the results with mode=article. This tool cannot run " +
-			"fetch or XHR, so search engines that build their results with JavaScript " +
-			"(google.com/search, bing.com/search) come back as an empty shell. An empty " +
-			"result — text_len 0, no title — means this URL yielded nothing, not that the " +
-			"thing you looked for does not exist.",
+			"mode=links, then open one of the results with mode=article. By default, page " +
+			"scripts can use fetch and XMLHttpRequest through the same network guards as the " +
+			"page fetch, but search engines that build results with JavaScript " +
+			"(google.com/search, bing.com/search) can still come back as an empty shell " +
+			"because their pages depend on APIs and interaction this tool does not provide. " +
+			"A result with text_len 0 and no title means this URL yielded nothing, not " +
+			"that the thing you looked for does not exist.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args fetchArgs) (*mcp.CallToolResult, fetchOut, error) {
 		// 并发闸放在最外层:一次请求的峰值内存几乎全部来自渲染时新建的
 		// qjs 运行时,所以限制同时进行的请求数就等于限制内存占用。
@@ -250,7 +252,6 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 		Selector:      args.Selector,
 		MaxTextLen:    maxText,
 		Markdown:      要Markdown,
-		RunScripts:    true,
 		DisableImages: true, // 页面脚本的 Image 探测对 MCP 无意义,省掉网络往返
 		// 页面脚本的网络能力与 <script src> 默认开着:不少页面靠脚本取数据
 		// 才把正文渲染出来,关掉就只能拿到空壳。可以用 env 关。
