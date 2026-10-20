@@ -28,6 +28,9 @@ qjsdom -mode article https://en.wikipedia.org/wiki/Glycolysis
 # Read a search results page, where the links are the content
 qjsdom -mode links "https://html.duckduckgo.com/html/?q=glycolysis"
 
+# Read text and links without starting the script runtime
+qjsdom -mode static https://example.com
+
 # Save the page's images so a model can look at them
 qjsdom -download-images -images-dir /tmp/imgs https://example.com
 
@@ -41,7 +44,9 @@ qjsdom -no-js-fetch -no-script-src https://example.com
 qjsdom -no-scripts https://example.com
 ```
 
-`-mode` picks the extraction strategy. Use `article` for articles and documentation, `links` for search results and index pages. Leave it out when you are not sure. The default, `all`, returns the whole page and its link list, so it loses nothing.
+`-mode` picks the extraction strategy. Use `article` for articles and documentation, `links` for search results and index pages, and `static` for server-rendered pages where you want the lowest-cost path. Leave it out when you are not sure. The default, `all`, returns the whole page and its link list, so it loses nothing.
+
+`static` does not start the script runtime. It parses the HTML in Go and returns whole-body text, links, and the title; it does not run scripts, pick an article container, or collect images. `-selector` and `-download-images` are rejected with `static`. A page whose content is built by JavaScript comes back as an empty shell, so use `static` only when the content is already in the HTML.
 
 Flags work in any position, so `qjsdom <url> -json` is fine.
 
@@ -63,6 +68,8 @@ Run `qjsdom -h` for the rest.
 The tool is `fetch_page`. It returns the page text, and when the page has images worth sending it returns them as image content blocks. A model that accepts images sees the figures directly, so charts and diagrams come through without the caller reading anything from disk.
 
 Pass `format: "markdown"` to get the page as Markdown instead of plain text. Headings, lists, links, and tables survive the conversion, and relative links become absolute when the page has an http(s) address. The default is `text`.
+
+`mode: "static"` parses the HTML without the script runtime and returns whole-body text and links. It does not return images and does not accept `selector`; use `article` or `all` when you need either.
 
 Environment variables:
 
@@ -123,7 +130,7 @@ Images come from the content container, not from the whole document. `article` m
 
 Pages that build their content in JavaScript are common enough that skipping their scripts means returning an empty shell. So by default the scripts run, and they can fetch.
 
-Pass `-no-scripts` to skip page script execution entirely. qjsdom still parses the HTML and extracts text, links, article containers, images, and Markdown from the HTML it was given; external `<script src>` files are not fetched either. `-no-js-fetch` and `-no-script-src` are narrower: they keep inline scripts but remove their network or their external files.
+Pass `-no-scripts` to skip page script execution without changing the extraction strategy. It still starts the renderer, so article selection, images, and Markdown work from the parsed DOM; external `<script src>` files are not fetched either. `-mode static` goes further and does not start the renderer at all, but it returns only whole-body text and links. `-no-js-fetch` and `-no-script-src` are narrower: they keep inline scripts but remove their network or their external files.
 
 `fetch` and `XMLHttpRequest` are real here, but they go through the same door as the page fetch itself: the scheme allowlist, the SSRF guard (re-checked on every redirect), the size cap, and the timeout. A page's scripts do not get a second path into the network, because whatever they can reach is what a page author's code can scan. Four limits sit on top: `GET` only (a `POST` from a page would make this machine send writes to third parties), 15 requests per page, 1 MB per response, and one 10-second budget for all of the page's network traffic. That budget covers external scripts, `fetch` and `XMLHttpRequest`, and `Image` probes, and its clock starts at the first request the page makes rather than at the start of the render, so building the DOM does not eat it. Once it runs out, further requests fail and the render records why in `scriptErrs`.
 

@@ -29,17 +29,23 @@ Result
 text, links, images
 ```
 
-The renderer holds no DOM logic. It loads JavaScript, hands the page over, and reads JSON back.
+The qjs renderer holds no DOM logic. It loads JavaScript, hands the page over, and reads JSON back.
+
+`mode=static` bypasses the renderer. It parses the HTML with `golang.org/x/net/html`, removes `script`, `style`, `noscript`, and `template`, and returns whole-body text and links. It does not create a qjs runtime, execute scripts, select an article container, or collect images. `selector` and `download-images` are rejected with this mode. Static text follows the HTML parser, so character references are decoded and CRLF is normalized; the script path's `textContent` can keep `&amp;` and `\r`.
 
 ## Packages
 
 | Package | Responsibility |
 | --- | --- |
 | `internal/fetcher` | HTTP, SSRF guard, retry, image probe and download |
-| `internal/renderer` | qjs lifetime, script injection, result decoding |
+| `internal/renderer` | qjs lifetime, static extraction, script injection, result decoding |
 | `internal/cache` | Page source cache with TTL and size cap |
 | `cmd/qjsdom` | Command line interface |
 | `cmd/qjsdom-mcp` | MCP server |
+
+## Memory
+
+A render leaves the Go heap at its high-water mark. The MCP server calls `debug.FreeOSMemory()` at the end of each request. In a local measurement the call took 1.5 to 2.5 ms and dropped the physical footprint from about 128 MB to 25 MB on the 431 KB fixture. The CLI does not call it because the process exits.
 
 ## The JavaScript side
 
