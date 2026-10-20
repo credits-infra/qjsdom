@@ -25,7 +25,7 @@ import (
 
 func main() {
 	var (
-		modeFlag    = flag.String("mode", "all", "提取策略: all(整页,默认) / article(正文) / links(链接列表)")
+		modeFlag    = flag.String("mode", "all", "提取策略: all(整页,默认) / article(正文) / links(链接列表) / static(整页文本+链接,不跑 JS)")
 		selector    = flag.String("selector", "", "正文容器 CSS 选择器(对 all/article 生效)")
 		maxLen      = flag.Int("max", 0, "正文截断长度,0=不截断")
 		asJSON      = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
@@ -167,8 +167,13 @@ func main() {
 		if out.Charset != "" {
 			fmt.Fprintf(os.Stderr, "[fetch]  字符集 %s(%s)\n", out.Charset, out.CharsetSource)
 		}
-		fmt.Fprintf(os.Stderr, "[render] 耗时 %.2fs | 脚本 %d/%d 执行成功 | 正文 %d 字\n",
-			out.Elapsed.Seconds(), out.ScriptsRan, out.ScriptTags, out.TextLen)
+		if out.Mode == string(renderer.ModeStatic) {
+			fmt.Fprintf(os.Stderr, "[render] 耗时 %.2fs | 正文 %d 字 | 模式 static(未执行脚本)\n",
+				out.Elapsed.Seconds(), out.TextLen)
+		} else {
+			fmt.Fprintf(os.Stderr, "[render] 耗时 %.2fs | 脚本 %d/%d 执行成功 | 正文 %d 字\n",
+				out.Elapsed.Seconds(), out.ScriptsRan, out.ScriptTags, out.TextLen)
+		}
 		if *markdown {
 			fmt.Fprintf(os.Stderr, "[render] Markdown %d 字\n", len([]rune(out.Markdown)))
 		}

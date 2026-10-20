@@ -62,13 +62,17 @@ type Mode string
 const (
 	// ModeAll 整页文本 + 链接列表,什么都不丢(默认)。
 	ModeAll Mode = "all"
-	// ModeArticle 正文优先:在候选容器里挑链接密度最低的。
+	// ModeArticle 正文优先:按固定顺序取第一个有足够文本的候选容器。
 	// 适合文章 / 百科 / 博客 / 文档。
 	ModeArticle Mode = "article"
 	// ModeLinks 链接列表(标题 + URL)。
 	// 搜索页 / 目录页 / 导航页的「正文」恰恰就是链接 ——
 	// 用 article 的判据反而会把真正的内容全删掉。
 	ModeLinks Mode = "links"
+	// ModeStatic 整页文本 + 链接,不创建 qjs 运行时,也不执行页面脚本。
+	// 它不做 article 容器选择,不收集图片;适合内容已经在 HTML 里的页面。
+	// 这是一个独立的输出契约,不要把它当成 all 的廉价实现。
+	ModeStatic Mode = "static"
 )
 
 // ParseMode 解析 mode 字符串。未知值回落到 all,不报错 ——
@@ -79,6 +83,8 @@ func ParseMode(s string) Mode {
 		return ModeArticle
 	case string(ModeLinks):
 		return ModeLinks
+	case string(ModeStatic):
+		return ModeStatic
 	default:
 		return ModeAll
 	}
@@ -244,6 +250,17 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	// 补全相对地址用的基准:页面里第一个 <base href> 会顶掉文档地址(浏览器行为)。
 	// 文档地址本身仍然交给 location.href,两者不能混。
 	基准 := 有效基准(html, pageURL)
+
+	// 静态模式在创建 qjs 运行时之前就返回:它只需要 HTML 解析与提取。
+	// 这是 mode=static 与 -no-scripts 的区别:后者仍要拿 qjs/linkedom 跑一遍。
+	if opt.Mode == ModeStatic {
+		out, err := renderStatic(html, 基准, opt)
+		if err != nil {
+			return nil, err
+		}
+		out.Elapsed = time.Since(start)
+		return out, nil
+	}
 
 	// 整页共用的联网时间预算:三条出站通路都从这里问"还能不能发"。
 	预算 := &网络预算{上限: 有效预算(opt.JSFetchBudget)}

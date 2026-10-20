@@ -6,6 +6,7 @@ require (
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/fastschema/qjs v0.0.6
 	github.com/modelcontextprotocol/go-sdk v1.8.0
+	golang.org/x/net v0.55.0
 	golang.org/x/text v0.37.0
 )
 
@@ -16,7 +17,6 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
