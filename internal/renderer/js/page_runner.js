@@ -92,6 +92,8 @@
   // ---- 正常路径 ----
   function runPage() {
     const PHASE = __PHASE__;
+    // 调用方是否要执行页面脚本。关掉时仍然解析 HTML 并提取正文。
+    const RUN_SCRIPTS = __RUN_SCRIPTS__;
     const { parseHTML } = Linkedom;
 
     // ── 为什么拆成两个阶段 ──────────────────────────────────────────────
@@ -156,6 +158,15 @@
       if (typeof document.defaultView !== "undefined" && document.defaultView) {
         globalThis.window = document.defaultView;
         globalThis.window.document = document;
+      }
+
+      // 关掉脚本时,解析完就把文档交给宿主,跳过整个脚本循环。
+      // 外链脚本在 Go 侧也不会被取回(见 renderer.Render),所以这里不会出现
+      // "有脚本没跑"的统计矛盾:scriptTags 照实计数,scriptsRan 为 0。
+      if (!RUN_SCRIPTS) {
+        scripts = Array.from(document.querySelectorAll("script"));
+        globalThis.__qjsdom_脚本统计 = { ran: 0, errs: errs, scripts: scripts };
+        return JSON.stringify({ phase: "scripts", scriptTags: scripts.length, scriptsRan: 0 });
       }
 
       // ---- 2. 执行页面内联脚本 ----

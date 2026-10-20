@@ -31,7 +31,7 @@ func main() {
 		asJSON      = flag.Bool("json", false, "以 JSON 输出(含脚本执行统计、链接、图片)")
 		markdown    = flag.Bool("markdown", false, "输出 Markdown(保留标题/列表/表格等结构)")
 		filePath    = flag.String("file", "", "渲染本地 HTML 文件,不联网")
-		noScripts   = flag.Bool("no-scripts", false, "不执行页面内联脚本(仅静态解析)")
+		noScripts   = flag.Bool("no-scripts", false, "不执行页面脚本(内联与外链),只解析和提取")
 		noImages    = flag.Bool("no-images", false, "不启用 Image 网络探测(不做图片 fetch)")
 		noJSFetch   = flag.Bool("no-js-fetch", false, "不让页面脚本联网(关掉 fetch / XMLHttpRequest)")
 		noScriptSrc = flag.Bool("no-script-src", false, "不加载 <script src> 外部脚本")
@@ -147,7 +147,7 @@ func main() {
 		Selector:         *selector,
 		MaxTextLen:       *maxLen,
 		Markdown:         *markdown,
-		RunScripts:       !*noScripts,
+		DisableScripts:   *noScripts,
 		DisableImages:    *noImages,
 		DisableJSFetch:   *noJSFetch,
 		DisableScriptSrc: *noScriptSrc,

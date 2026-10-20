@@ -104,9 +104,7 @@ type Options struct {
 	// 转换交给现成的库(internal/markdown),不在 JS 里另写一份规则:
 	// HTML→Markdown 的边界(嵌套列表、表格、转义)不值得自己踩一遍。
 	Markdown bool
-	// RunScripts 是否执行页面内联脚本(默认 true)。
-	RunScripts bool
-	// EnableImages 是否让 `new Image()` 真的去取图片尺寸(默认 true)。
+	// DisableImages 关掉 `new Image()` 的图片尺寸探测(默认开启)。
 	// 用「禁用」而非「启用」表达,是为了让 Go 的零值 = 默认开启。
 	DisableImages bool
 	// DisableJSFetch 关掉页面脚本的网络能力(globalThis.fetch / XMLHttpRequest)。
@@ -116,6 +114,12 @@ type Options struct {
 	// DisableScriptSrc 关掉 <script src> 的加载(默认开启)。
 	// 默认开:正文常由外链脚本渲染出来,不取这些脚本就只能看到空壳。
 	DisableScriptSrc bool
+	// DisableScripts 关掉页面脚本的执行(内联与外链,默认开启)。
+	// 用「禁用」而非「启用」表达,是为了让 Go 的零值 = 默认开启 ——
+	// 与 DisableImages / DisableJSFetch / DisableScriptSrc 保持同一约定。
+	// 关掉之后 HTML 照常解析与提取,但外链脚本也不再取回:取回来只会内联一段
+	// 不会执行的代码,还白白向页面声明的地址发请求。
+	DisableScripts bool
 	// FetchOptions 供图片探测使用的网络参数。
 	FetchOptions fetcher.Options
 	// JSFetchBudget 整页联网的时间预算(零值 = 10 秒)。
@@ -259,8 +263,10 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	}
 
 	// 外链脚本先取回来内联,再交给 runner —— 顺序就是源码里的顺序。
+	// 关掉脚本执行时连取回也跳过:内联一段不会执行的代码没有意义,
+	// 而取回本身会向页面声明的地址发请求。
 	var 脚本提示 []string
-	if !opt.DisableScriptSrc {
+	if !opt.DisableScriptSrc && !opt.DisableScripts {
 		html, 脚本提示 = 展开外部脚本(html, 基准, opt, 预算)
 	}
 
@@ -325,10 +331,6 @@ func Render(html, pageURL string, opt Options) (*Result, error) {
 	if 预算.耗尽 {
 		out.ScriptErrs = append(out.ScriptErrs, fmt.Sprintf(
 			"note: 本页联网时间预算(%s)已用尽,其后的网络请求被拒 —— 内容可能因此不完整", 预算.上限))
-	}
-	if !opt.RunScripts {
-		// RunScripts=false 时,page_runner 依然会跑;这里只用于标注
-		out.ScriptErrs = append(out.ScriptErrs, "note: RunScripts=false 尚未实现,脚本仍然执行了")
 	}
 	if opt.MaxTextLen > 0 {
 		out.Text = truncateRunes(out.Text, opt.MaxTextLen)
@@ -404,7 +406,7 @@ func downloadPageImages(out *Result, 基准 string, opt Options) {
 	}
 }
 
-// buildRunner 把三个占位符替换为 JSON 字面量。
+// buildRunner 把占位符替换为 JSON 或布尔字面量。
 // 用 JSON 编码而不是裸字符串拼接 —— HTML 里任何引号/反斜杠/换行都会被正确转义。
 func buildRunner(html, pageURL, 基准 string, opt Options, phase string) string {
 	htmlLit, _ := json.Marshal(html)
@@ -426,10 +428,17 @@ func buildRunner(html, pageURL, 基准 string, opt Options, phase string) string
 	}
 
 	// 允许外链脚本 = 既没关掉 <script src> 加载,也没有关掉页面脚本的网络能力
-	// (document.write 注入的外链脚本只能在 JS 侧取回,需要后者)。
+	// (document.write 注入的外链脚本只能在 JS 侧取回,需要后者),
+	// 并且脚本执行本身没被关掉。
 	allowSrcLit := "false"
-	if !opt.DisableScriptSrc && !opt.DisableJSFetch {
+	if !opt.DisableScriptSrc && !opt.DisableJSFetch && !opt.DisableScripts {
 		allowSrcLit = "true"
+	}
+
+	// 是否执行页面脚本。关掉时仍会解析 HTML 并跑提取,只是跳过脚本循环。
+	runScriptsLit := "true"
+	if opt.DisableScripts {
+		runScriptsLit = "false"
 	}
 
 	s := pageRunner
@@ -445,6 +454,7 @@ func buildRunner(html, pageURL, 基准 string, opt Options, phase string) string
 	phaseLit, _ := json.Marshal(phase)
 	s = strings.ReplaceAll(s, "__PHASE__", string(phaseLit))
 	s = strings.ReplaceAll(s, "__ALLOW_SCRIPT_SRC__", allowSrcLit)
+	s = strings.ReplaceAll(s, "__RUN_SCRIPTS__", runScriptsLit)
 	// JS 侧取回的外链脚本(只可能是 document.write 注入的)也要守同一条上限 ——
 	// 数字从 Go 传过去,免得两处各写一个 512KB。
 	s = strings.ReplaceAll(s, "__MAX_SCRIPT_BYTES__", strconv.Itoa(maxScriptSrcBytes))

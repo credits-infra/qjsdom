@@ -36,6 +36,9 @@ qjsdom -markdown -mode article https://en.wikipedia.org/wiki/Glycolysis
 
 # Render without letting the page's scripts touch the network
 qjsdom -no-js-fetch -no-script-src https://example.com
+
+# Parse the HTML without executing page scripts
+qjsdom -no-scripts https://example.com
 ```
 
 `-mode` picks the extraction strategy. Use `article` for articles and documentation, `links` for search results and index pages. Leave it out when you are not sure. The default, `all`, returns the whole page and its link list, so it loses nothing.
@@ -118,7 +121,9 @@ Images come from the content container, not from the whole document. `article` m
 
 ## Scripts on the page
 
-Pages that build their content in JavaScript are common enough that skipping their scripts means returning an empty shell. So the scripts run, and they can fetch.
+Pages that build their content in JavaScript are common enough that skipping their scripts means returning an empty shell. So by default the scripts run, and they can fetch.
+
+Pass `-no-scripts` to skip page script execution entirely. qjsdom still parses the HTML and extracts text, links, article containers, images, and Markdown from the HTML it was given; external `<script src>` files are not fetched either. `-no-js-fetch` and `-no-script-src` are narrower: they keep inline scripts but remove their network or their external files.
 
 `fetch` and `XMLHttpRequest` are real here, but they go through the same door as the page fetch itself: the scheme allowlist, the SSRF guard (re-checked on every redirect), the size cap, and the timeout. A page's scripts do not get a second path into the network, because whatever they can reach is what a page author's code can scan. Four limits sit on top: `GET` only (a `POST` from a page would make this machine send writes to third parties), 15 requests per page, 1 MB per response, and one 10-second budget for all of the page's network traffic. That budget covers external scripts, `fetch` and `XMLHttpRequest`, and `Image` probes, and its clock starts at the first request the page makes rather than at the start of the render, so building the DOM does not eat it. Once it runs out, further requests fail and the render records why in `scriptErrs`.
 

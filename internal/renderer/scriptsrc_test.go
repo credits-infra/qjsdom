@@ -196,7 +196,7 @@ func Test数据块不被当脚本执行(t *testing.T) {
 	if err != nil {
 		t.Fatalf("渲染失败: %v", err)
 	}
-	// 只断言"没有报错":"note:" 开头的说明是另一回事(例如 RunScripts=false 的提示)
+	// 只断言"没有报错":"note:" 开头的说明是另一回事(例如联网预算用尽的提示)
 	var 报错 []string
 	for _, e := range res.ScriptErrs {
 		if !strings.HasPrefix(e, "note:") {
