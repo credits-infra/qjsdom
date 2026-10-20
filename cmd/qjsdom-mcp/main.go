@@ -71,35 +71,86 @@ type config struct {
 	// jsFetchBudget 整页联网的时间预算(零值 = 渲染器默认 10s):
 	// 外链脚本、页面脚本请求、图片探测三条通路共用同一个窗口。
 	jsFetchBudget time.Duration
+	// defaultMode 是调用方没有指定 mode 时使用的策略。
+	// 只允许 all 或 static:前者启动 qjs,后者不启动。
+	defaultMode renderer.Mode
+	// defaultModeWarning 记录 QJSDOM_DEFAULT_MODE 无效时的提示。
+	// 由 main 打到 stderr;loadConfig 本身不打印,方便测试。
+	defaultModeWarning string
 }
 
 func loadConfig() config {
+	defaultMode, defaultModeWarning := parseDefaultMode(envStr("QJSDOM_DEFAULT_MODE", ""))
 	c := config{
-		cacheDir:       envStr("QJSDOM_CACHE_DIR", ""),
-		cacheTTL:       envDur("QJSDOM_CACHE_TTL", cache.DefaultTTL),
-		cacheMax:       envInt64("QJSDOM_CACHE_MAX", cache.DefaultMaxBytes),
-		timeout:        envDur("QJSDOM_TIMEOUT", 20*time.Second),
-		maxText:        int(envInt64("QJSDOM_MAX_TEXT", 60000)),
-		maxImages:      int(envInt64("QJSDOM_MAX_IMAGES", 5)),
-		minImageSide:   int(envInt64("QJSDOM_MIN_IMAGE_SIDE", 100)),
-		minImageByte:   envInt64("QJSDOM_MIN_IMAGE_BYTES", 5120),
-		maxImageByte:   envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
-		jsFetch:        envBool("QJSDOM_JS_FETCH", true),
-		scriptSrc:      envBool("QJSDOM_SCRIPT_SRC", true),
-		jsFetchBudget:  envDur("QJSDOM_JS_FETCH_BUDGET", 0),
-		saveImagesDir:  envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
-		debug:          os.Getenv("QJSDOM_DEBUG") == "1",
-		allowSchemes:   fetcher.SplitSchemes(envStr("QJSDOM_ALLOW_SCHEMES", "")),
-		maxConcurrency: int(envInt64("QJSDOM_MAX_CONCURRENCY", 2)),
+		cacheDir:           envStr("QJSDOM_CACHE_DIR", ""),
+		cacheTTL:           envDur("QJSDOM_CACHE_TTL", cache.DefaultTTL),
+		cacheMax:           envInt64("QJSDOM_CACHE_MAX", cache.DefaultMaxBytes),
+		timeout:            envDur("QJSDOM_TIMEOUT", 20*time.Second),
+		maxText:            int(envInt64("QJSDOM_MAX_TEXT", 60000)),
+		maxImages:          int(envInt64("QJSDOM_MAX_IMAGES", 5)),
+		minImageSide:       int(envInt64("QJSDOM_MIN_IMAGE_SIDE", 100)),
+		minImageByte:       envInt64("QJSDOM_MIN_IMAGE_BYTES", 5120),
+		maxImageByte:       envInt64("QJSDOM_MAX_IMAGE_BYTES", 2<<20),
+		jsFetch:            envBool("QJSDOM_JS_FETCH", true),
+		scriptSrc:          envBool("QJSDOM_SCRIPT_SRC", true),
+		jsFetchBudget:      envDur("QJSDOM_JS_FETCH_BUDGET", 0),
+		saveImagesDir:      envStr("QJSDOM_SAVE_IMAGES_DIR", ""),
+		debug:              os.Getenv("QJSDOM_DEBUG") == "1",
+		allowSchemes:       fetcher.SplitSchemes(envStr("QJSDOM_ALLOW_SCHEMES", "")),
+		maxConcurrency:     int(envInt64("QJSDOM_MAX_CONCURRENCY", 2)),
+		defaultMode:        defaultMode,
+		defaultModeWarning: defaultModeWarning,
 	}
 	return c
+}
+
+// parseDefaultMode 解析 QJSDOM_DEFAULT_MODE。
+//
+// 只接受 all 与 static:默认值回答的是"要不要启动 qjs",而 article / links
+// 是每次调用的抽取意图,不该被设成所有未指定 mode 的调用的默认。
+// 未知值回落到 all 并返回一条提示,不因为配置写错就让服务起不来。
+func parseDefaultMode(raw string) (renderer.Mode, string) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return renderer.ModeAll, ""
+	case string(renderer.ModeAll):
+		return renderer.ModeAll, ""
+	case string(renderer.ModeStatic):
+		return renderer.ModeStatic, ""
+	default:
+		return renderer.ModeAll, fmt.Sprintf(
+			"QJSDOM_DEFAULT_MODE=%q 无效:只支持 all 或 static,article/links 需要每次显式指定;按 all 处理",
+			strings.TrimSpace(raw))
+	}
+}
+
+// effectiveMode 决定一次请求实际使用的 mode:显式值优先,空值才看服务端默认。
+// 默认值只填"调用方没说"的那个空,不覆盖调用方的选择。
+//
+// 无法识别的显式值回落到服务端默认,而不是一律 all:在默认 static 的服务器上,
+// 一个拼错的 mode 不该悄悄把 JS 运行时拉起来。ParseMode 自己的未知值回落 all
+// 仍然保留,CLI 走的是那一条。
+func effectiveMode(requested string, def renderer.Mode) renderer.Mode {
+	fallback := def
+	if fallback != renderer.ModeStatic {
+		fallback = renderer.ModeAll
+	}
+	v := strings.TrimSpace(requested)
+	if v == "" {
+		return fallback
+	}
+	mode := renderer.ParseMode(v)
+	if strings.EqualFold(v, string(mode)) {
+		return mode
+	}
+	return fallback
 }
 
 // fetchArgs 是 fetch_page 的入参。json/jsonschema 两个 tag 会被 SDK
 // 用来生成工具的 JSON Schema 与描述。
 type fetchArgs struct {
 	URL      string `json:"url" jsonschema:"required. Absolute http(s) URL of the page to read."`
-	Mode     string `json:"mode,omitempty" jsonschema:"Extraction strategy. all (default) returns the whole page text plus its links. article picks the main content container. links returns just the link list. static parses the HTML without a script runtime and returns whole-body text plus links; it returns no images and does not accept selector."`
+	Mode     string `json:"mode,omitempty" jsonschema:"Extraction strategy. all returns the whole page text plus its links. article picks the main content container. links returns just the link list. static parses the HTML without a script runtime and returns whole-body text plus links; it returns no images and does not accept selector. The server default is reported in the tool description; an explicit mode overrides it."`
 	Selector string `json:"selector,omitempty" jsonschema:"CSS selector naming the content container directly. Use it when article mode picks the wrong container. For Wikipedia, #mw-content-text. Not supported with mode=static."`
 	MaxLen   int    `json:"max_len,omitempty" jsonschema:"Truncate the returned text at this many characters. Counted in characters, so multi-byte text is never cut mid-character. 0 uses the server default."`
 	Images   *bool  `json:"images,omitempty" jsonschema:"Return the page's images as image content blocks so the model can see them. Defaults to true. Small icons are filtered out automatically. mode=static returns no images."`
@@ -127,8 +178,57 @@ type fetchOut struct {
 	ImagePaths []string `json:"image_paths,omitempty"`
 }
 
+// buildToolDescription 按服务端默认模式生成工具说明。
+//
+// 默认模式必须写进描述:同一个二进制在不同部署里可以默认 all 或 static,
+// 模型只看得见描述;固定写 all 会让 static 默认的服务器误导调用方。
+func buildToolDescription(def renderer.Mode) string {
+	defaultLine := "By default this server uses mode=all: it executes the page's JavaScript " +
+		"first so that script-generated content is included."
+	imageLine := "Page images are returned as image content blocks so you can read " +
+		"illustrations, diagrams, and figures; the text ends with a numbered list giving " +
+		"each image's URL, format, pixel size, and saved path."
+	modeLine := "Use mode=links for search results and index pages, mode=article for " +
+		"articles and documentation, and mode=static for server-rendered pages that need " +
+		"no script runtime."
+	searchLine := "To search the web, fetch https://html.duckduckgo.com/html/?q=<keywords> " +
+		"with mode=links, then open one of the results with mode=article. mode=static also " +
+		"returns the page's links, without starting the runtime."
+	if def == renderer.ModeStatic {
+		defaultLine = "This server defaults to mode=static: it parses the HTML without a " +
+			"script runtime and returns whole-body text and links. It does not return images " +
+			"and rejects selector."
+		imageLine = "With mode=all or mode=article, page images are returned as image content " +
+			"blocks so you can read illustrations, diagrams, and figures; the text ends with " +
+			"a numbered list giving each image's URL, format, pixel size, and saved path."
+		modeLine = "Use mode=static for server-rendered pages, including search results and " +
+			"index pages; it returns the page text and links without starting the runtime. " +
+			"Use mode=article for articles and documentation, and mode=links when you want " +
+			"only the link list; both start the script runtime. Use mode=all when you need " +
+			"script-generated content or images."
+		searchLine = "To search the web, fetch https://html.duckduckgo.com/html/?q=<keywords> " +
+			"with mode=static, which returns the results and their links without starting " +
+			"the runtime. Open a result with mode=article when you need the article " +
+			"container, or mode=static for the whole page."
+	}
+	return "Fetch a web page and return its content as text. " + defaultLine +
+		" Runs in-process with no browser and no Node runtime. " + modeLine +
+		" An explicit mode overrides the server default. mode=static returns " +
+		"whole-body text and links only; it returns no images and rejects selector. " +
+		imageLine + " " + searchLine + " When page scripts run, they " +
+		"can use fetch and XMLHttpRequest through the same network guards as the page " +
+		"fetch, but search engines that build results with JavaScript (google.com/search, " +
+		"bing.com/search) can still come back as an empty shell because their pages depend " +
+		"on APIs and interaction this tool does not provide. A result with text_len 0 and " +
+		"no title means this URL yielded nothing, not that the thing you looked for does " +
+		"not exist."
+}
+
 func main() {
 	cfg := loadConfig()
+	if cfg.defaultModeWarning != "" {
+		fmt.Fprintf(os.Stderr, "[qjsdom-mcp] 警告:%s\n", cfg.defaultModeWarning)
+	}
 
 	// MCP 服务是长驻进程,缓存默认开启 —— 模型换 mode 重试时不必重新抓取。
 	var c *cache.Cache
@@ -147,25 +247,8 @@ func main() {
 	闸 := 新并发闸(cfg.maxConcurrency, cfg.maxConcurrency*2)
 
 	mcp.AddTool(srv, &mcp.Tool{
-		Name: "fetch_page",
-		Description: "Fetch a web page and return its content as text. By default it executes " +
-			"the page's JavaScript first so that script-generated content is included; mode=static " +
-			"skips the runtime. Runs in-process " +
-			"with no browser and no Node runtime. Use mode=links for search results and index " +
-			"pages, mode=article for articles and documentation, mode=static for server-rendered " +
-			"pages that need no script runtime, and the default mode=all when unsure. mode=static " +
-			"returns whole-body text and links only; it returns no images and rejects selector. " +
-			"Page images are returned as image content blocks so you can read " +
-			"illustrations, diagrams, and figures; the text ends with a numbered list giving " +
-			"each image's URL, format, pixel size, and saved path. " +
-			"To search the web, fetch https://html.duckduckgo.com/html/?q=<keywords> with " +
-			"mode=links, then open one of the results with mode=article. By default, page " +
-			"scripts can use fetch and XMLHttpRequest through the same network guards as the " +
-			"page fetch, but search engines that build results with JavaScript " +
-			"(google.com/search, bing.com/search) can still come back as an empty shell " +
-			"because their pages depend on APIs and interaction this tool does not provide. " +
-			"A result with text_len 0 and no title means this URL yielded nothing, not " +
-			"that the thing you looked for does not exist.",
+		Name:        "fetch_page",
+		Description: buildToolDescription(cfg.defaultMode),
 	}, func(ctx context.Context, req *mcp.CallToolRequest, args fetchArgs) (*mcp.CallToolResult, fetchOut, error) {
 		// 并发闸放在最外层:一次请求的峰值内存几乎全部来自渲染时新建的
 		// qjs 运行时,所以限制同时进行的请求数就等于限制内存占用。
@@ -179,8 +262,8 @@ func main() {
 	})
 
 	if cfg.debug {
-		fmt.Fprintf(os.Stderr, "[qjsdom-mcp] 启动 v%s cache=%v maxImages=%d 并发上限=%d\n",
-			version, c != nil, cfg.maxImages, cfg.maxConcurrency)
+		fmt.Fprintf(os.Stderr, "[qjsdom-mcp] 启动 v%s cache=%v maxImages=%d defaultMode=%s 并发上限=%d\n",
+			version, c != nil, cfg.maxImages, cfg.defaultMode, cfg.maxConcurrency)
 	}
 	// 放行了 http/https 之外的协议就要说一声:这是一条放宽,而且 file
 	// 等于给调用方读了本机文件的入口。
@@ -214,7 +297,7 @@ func handleFetch(cfg config, c *cache.Cache, args fetchArgs) (*mcp.CallToolResul
 		return errResult(err.Error()), out, nil
 	}
 
-	mode := renderer.ParseMode(args.Mode)
+	mode := effectiveMode(args.Mode, cfg.defaultMode)
 	out.Mode = string(mode)
 
 	fo := fetcher.DefaultOptions()
